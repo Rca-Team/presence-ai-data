@@ -75,6 +75,70 @@ type FaceSamplesZipManifest = {
   }>;
 };
 
+const EMPTY_STUDENT_DETAILS: FaceSamplesZipManifest['students'][number]['details'] = {
+  class: null,
+  section: null,
+  rollNumber: null,
+  category: null,
+  bloodGroup: null,
+  parentName: null,
+  parentPhone: null,
+  parentEmail: null,
+  address: null,
+  transportMode: null,
+  phone: null,
+  email: null,
+  profileName: null,
+  username: null,
+  metadata: {},
+};
+
+const normalizeManifestStudent = (
+  student: any,
+  index: number
+): FaceSamplesZipManifest['students'][number] => {
+  const rawSamples = Array.isArray(student?.samples) ? student.samples : [];
+  const normalizedSamples = rawSamples
+    .map((sample: any) => {
+      const path = toOptionalText(sample?.path || sample?.filePath || sample?.imagePath || sample?.image_url);
+      if (!path) return null;
+      return {
+        path,
+        source: (sample?.source || 'record_registration') as FaceSample['source'],
+        createdAt: toOptionalText(sample?.createdAt || sample?.created_at) || new Date().toISOString(),
+        status: toOptionalText(sample?.status),
+      };
+    })
+    .filter(Boolean) as FaceSamplesZipManifest['students'][number]['samples'];
+
+  const details = student?.details && typeof student.details === 'object' ? student.details : {};
+
+  return {
+    userId: toOptionalText(student?.userId || student?.user_id) || '',
+    employeeId: toOptionalText(student?.employeeId || student?.studentId || student?.student_id) || '',
+    name: toOptionalText(student?.name || student?.student_name) || `Student ${index + 1}`,
+    details: {
+      class: toOptionalText(details.class),
+      section: toOptionalText(details.section),
+      rollNumber: toOptionalText(details.rollNumber || details.roll_number),
+      category: toOptionalText(details.category),
+      bloodGroup: toOptionalText(details.bloodGroup || details.blood_group),
+      parentName: toOptionalText(details.parentName || details.parent_name),
+      parentPhone: toOptionalText(details.parentPhone || details.parent_phone),
+      parentEmail: toOptionalText(details.parentEmail || details.parent_email),
+      address: toOptionalText(details.address),
+      transportMode: toOptionalText(details.transportMode || details.transport_mode),
+      phone: toOptionalText(details.phone),
+      email: toOptionalText(details.email),
+      profileName: toOptionalText(details.profileName || details.profile_name),
+      username: toOptionalText(details.username),
+      metadata: details.metadata && typeof details.metadata === 'object' ? details.metadata : {},
+    },
+    sampleCount: normalizedSamples.length,
+    samples: normalizedSamples,
+  };
+};
+
 type ImportCandidate = {
   key: string;
   student: FaceSamplesZipManifest['students'][number];
@@ -1272,10 +1336,17 @@ const StudentFaceSamplesManager: React.FC = () => {
       const manifestText = await zip.file('manifest.json')?.async('string');
       if (!manifestText) throw new Error('manifest.json is missing from this ZIP file.');
 
-      const manifest = JSON.parse(manifestText) as FaceSamplesZipManifest;
-      if (!manifest?.students || !Array.isArray(manifest.students)) {
+      const parsedManifest = JSON.parse(manifestText) as FaceSamplesZipManifest;
+      if (!parsedManifest?.students || !Array.isArray(parsedManifest.students)) {
         throw new Error('Invalid ZIP format: students list is missing.');
       }
+
+      const manifest: FaceSamplesZipManifest = {
+        version: Number(parsedManifest.version || 1),
+        exportedAt: parsedManifest.exportedAt || new Date().toISOString(),
+        app: parsedManifest.app || 'attendance-system',
+        students: parsedManifest.students.map((student: any, index: number) => normalizeManifestStudent(student, index)),
+      };
 
       const [existingByStudentIdRes, existingByUserIdRes] = await Promise.all([
         supabase
@@ -1311,7 +1382,7 @@ const StudentFaceSamplesManager: React.FC = () => {
           (student.userId ? byUserId.get(student.userId) : null) ||
           null;
         return {
-          key: `${student.employeeId || student.userId || student.name || 'student'}-${index}`,
+          key: `${student.employeeId || student.userId || slugifyPart(student.name) || 'student'}-${index}`,
           student,
           isExisting: Boolean(existing),
           existingStudentId: existing?.student_id || null,
@@ -1373,8 +1444,13 @@ const StudentFaceSamplesManager: React.FC = () => {
         const restoredPaths: string[] = [];
         let studentFailed = false;
 
-        for (let idx = 0; idx < student.samples.length; idx += 1) {
+        for (let idx = 0; idx < (student.samples?.length || 0); idx += 1) {
           const sample = student.samples[idx];
+          if (!sample?.path) {
+            failedImages += 1;
+            setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
+            continue;
+          }
           const fileEntry = importPreparedZip.file(sample.path);
           if (!fileEntry) {
             failedImages += 1;
@@ -1429,23 +1505,7 @@ const StudentFaceSamplesManager: React.FC = () => {
             (isUuid(student.userId) ? student.userId : null) ||
             crypto.randomUUID();
 
-          const details = student.details || {
-            class: null,
-            section: null,
-            rollNumber: null,
-            category: null,
-            bloodGroup: null,
-            parentName: null,
-            parentPhone: null,
-            parentEmail: null,
-            address: null,
-            transportMode: null,
-            phone: null,
-            email: null,
-            profileName: null,
-            username: null,
-            metadata: {},
-          };
+          const details = student.details || EMPTY_STUDENT_DETAILS;
 
           const registrationPayload: Record<string, any> = {
             user_id: resolvedUserId,
@@ -1674,9 +1734,9 @@ const StudentFaceSamplesManager: React.FC = () => {
 
           <ScrollArea className="max-h-none pr-2">
             <div className="space-y-2">
-              {(selectedUserId ? filteredGroups.filter((g) => g.userId === selectedUserId) : filteredGroups).map((g) => (
+              {(selectedUserId ? filteredGroups.filter((g) => g.userId === selectedUserId) : filteredGroups).map((g, idx) => (
                 <button
-                  key={g.userId}
+                  key={`${g.userId || 'group'}-${g.employeeId || 'student'}-${idx}`}
                   onClick={() => setSelectedUserId(selectedUserId === g.userId ? '' : g.userId)}
                   className={`w-full rounded-md border p-3 text-left transition-colors ${selectedUserId === g.userId ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-muted/50'}`}
                 >
@@ -1731,8 +1791,8 @@ const StudentFaceSamplesManager: React.FC = () => {
                   <option value="">Merge into...</option>
                   {groups
                     .filter((g) => g.userId !== selectedGroup.userId)
-                    .map((g) => (
-                      <option key={g.userId} value={g.userId}>
+                    .map((g, idx) => (
+                      <option key={`${g.userId || 'group'}-${g.employeeId || 'student'}-${idx}`} value={g.userId}>
                         {g.name} ({g.employeeId})
                       </option>
                     ))}
@@ -1864,8 +1924,8 @@ const StudentFaceSamplesManager: React.FC = () => {
                         <option value="">Select student...</option>
                         {groups
                           .filter((g) => g.userId !== sample.user_id)
-                          .map((g) => (
-                            <option key={g.userId} value={g.userId}>
+                          .map((g, idx) => (
+                            <option key={`${g.userId || 'group'}-${g.employeeId || 'student'}-${idx}`} value={g.userId}>
                               {g.name} ({g.employeeId})
                             </option>
                           ))}
@@ -1994,7 +2054,7 @@ const StudentFaceSamplesManager: React.FC = () => {
             <ScrollArea className="h-[340px] rounded-md border p-2">
               <div className="space-y-2">
                 {importCandidates.map((candidate) => {
-                  const details = candidate.student.details;
+                  const details = candidate.student.details || EMPTY_STUDENT_DETAILS;
                   const checked = selectedImportKeys.has(candidate.key);
                   return (
                     <label key={candidate.key} className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-muted/30">
