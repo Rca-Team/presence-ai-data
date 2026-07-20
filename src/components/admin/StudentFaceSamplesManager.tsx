@@ -238,6 +238,15 @@ const StudentFaceSamplesManager: React.FC = () => {
   const [reregisteringStudent, setReregisteringStudent] = useState(false);
   const [exportingZip, setExportingZip] = useState(false);
   const [importingZip, setImportingZip] = useState(false);
+  const [exportProgress, setExportProgress] = useState<OperationProgress | null>(null);
+  const [importProgress, setImportProgress] = useState<OperationProgress | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importPreparedZip, setImportPreparedZip] = useState<JSZip | null>(null);
+  const [importManifest, setImportManifest] = useState<FaceSamplesZipManifest | null>(null);
+  const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([]);
+  const [selectedImportKeys, setSelectedImportKeys] = useState<Set<string>>(new Set());
+  const [conflictMode, setConflictMode] = useState<'overwrite' | 'skip'>('skip');
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
   const [selectedSampleIds, setSelectedSampleIds] = useState<Set<string>>(new Set());
 
   const importZipInputRef = React.useRef<HTMLInputElement | null>(null);
