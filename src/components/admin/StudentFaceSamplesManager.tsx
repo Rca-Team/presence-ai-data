@@ -233,6 +233,7 @@ const StudentFaceSamplesManager: React.FC = () => {
   const [transferSampleId, setTransferSampleId] = useState<string | null>(null);
   const [transferTargetUserId, setTransferTargetUserId] = useState<string>('');
   const [deletingStudent, setDeletingStudent] = useState(false);
+  const [deletingProfile, setDeletingProfile] = useState(false);
   const [mergeTargetUserId, setMergeTargetUserId] = useState<string>('');
   const [mergingStudent, setMergingStudent] = useState(false);
   const [reregisteringStudent, setReregisteringStudent] = useState(false);
@@ -770,6 +771,48 @@ const StudentFaceSamplesManager: React.FC = () => {
       });
     } finally {
       setDeletingStudent(false);
+    }
+  };
+
+  const handleDeleteStudentProfile = async () => {
+    if (!selectedGroup?.userId) {
+      toast({
+        title: 'No profile linked',
+        description: 'This student does not have a linked profile user ID.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete profile for ${selectedGroup.name} (${selectedGroup.employeeId})?\n\nThis removes the student profile record. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingProfile(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('user_id', selectedGroup.userId);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Profile deleted',
+        description: `Removed profile for ${selectedGroup.name}.`,
+      });
+
+      fetchSamples();
+    } catch (error) {
+      console.error('Failed deleting student profile:', error);
+      toast({
+        title: 'Delete profile failed',
+        description: 'Could not delete this student profile.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingProfile(false);
     }
   };
 
@@ -1711,6 +1754,15 @@ const StudentFaceSamplesManager: React.FC = () => {
                 >
                   <ArrowRightLeft className="w-4 h-4 mr-1" />
                   {mergingStudent ? 'Merging...' : 'Merge'}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDeleteStudentProfile}
+                  disabled={deletingProfile || !selectedGroup.userId}
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  {deletingProfile ? 'Deleting profile...' : 'Delete student profile'}
                 </Button>
                 <Button
                   variant="destructive"
