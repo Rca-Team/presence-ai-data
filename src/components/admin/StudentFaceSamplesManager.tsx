@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { Search, User, Scissors, RefreshCw, ImageIcon, Trash2, ArrowRightLeft, ArrowLeft, UserX } from 'lucide-react';
+import { Search, User, Scissors, RefreshCw, ImageIcon, Trash2, ArrowRightLeft, ArrowLeft, UserX, Download, Upload } from 'lucide-react';
+import JSZip from 'jszip';
 import ImageCropper from './ImageCropper';
 import { uploadImage } from '@/services/face-recognition/StorageService';
 import {
@@ -35,8 +36,42 @@ type StudentGroup = {
   samples: FaceSample[];
 };
 
+type FaceSamplesZipManifest = {
+  version: number;
+  exportedAt: string;
+  app: string;
+  students: Array<{
+    userId: string;
+    employeeId: string;
+    name: string;
+    sampleCount: number;
+    samples: Array<{
+      path: string;
+      source: FaceSample['source'];
+      createdAt: string;
+      status?: string | null;
+    }>;
+  }>;
+};
+
 const isSlot = (s: FaceSample) => s.source_table === 'face_descriptors';
 const FACE_SAMPLE_BUCKETS = ['face-images', 'attendance-training-faces', 'student-registration-faces'] as const;
+
+const slugifyPart = (value: string) =>
+  (value || 'unknown')
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48) || 'unknown';
+
+const extensionFromMime = (mimeType: string) => {
+  if (mimeType.includes('png')) return '.png';
+  if (mimeType.includes('webp')) return '.webp';
+  if (mimeType.includes('bmp')) return '.bmp';
+  if (mimeType.includes('gif')) return '.gif';
+  return '.jpg';
+};
 
 const parseStoragePathFromUrl = (value: string, bucket: string): string | null => {
   const cleaned = value.trim();
@@ -149,7 +184,11 @@ const StudentFaceSamplesManager: React.FC = () => {
   const [mergeTargetUserId, setMergeTargetUserId] = useState<string>('');
   const [mergingStudent, setMergingStudent] = useState(false);
   const [reregisteringStudent, setReregisteringStudent] = useState(false);
+  const [exportingZip, setExportingZip] = useState(false);
+  const [importingZip, setImportingZip] = useState(false);
   const [selectedSampleIds, setSelectedSampleIds] = useState<Set<string>>(new Set());
+
+  const importZipInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const isUuid = (value: string | null | undefined) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
@@ -981,6 +1020,243 @@ const StudentFaceSamplesManager: React.FC = () => {
     }
   };
 
+  const handleExportAllStudentsZip = async () => {
+    if (groups.length === 0) {
+      toast({ title: 'Nothing to export', description: 'No student face samples found.' });
+      return;
+    }
+
+    setExportingZip(true);
+    try {
+      const zip = new JSZip();
+      const studentsRoot = zip.folder('students');
+      const manifest: FaceSamplesZipManifest = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        app: 'Presence Face Samples Backup',
+        students: [],
+      };
+
+      let exportedImageCount = 0;
+      let skippedImageCount = 0;
+
+      for (const group of groups) {
+        const studentFolderName = `${slugifyPart(group.employeeId || 'no-id')}-${slugifyPart(group.name)}`;
+        const studentFolder = studentsRoot?.folder(studentFolderName);
+        const studentManifestEntry: FaceSamplesZipManifest['students'][number] = {
+          userId: group.userId,
+          employeeId: group.employeeId,
+          name: group.name,
+          sampleCount: 0,
+          samples: [],
+        };
+
+        const imageSamples = group.samples.filter((sample) => !!sample.image_url);
+
+        for (let index = 0; index < imageSamples.length; index += 1) {
+          const sample = imageSamples[index];
+          if (!sample.image_url) continue;
+
+          try {
+            const response = await fetch(sample.image_url);
+            if (!response.ok) {
+              skippedImageCount += 1;
+              continue;
+            }
+
+            const blob = await response.blob();
+            const extension = extensionFromMime(blob.type || 'image/jpeg');
+            const fileName = `${String(index + 1).padStart(3, '0')}-${sample.source}${extension}`;
+            const zipPath = `students/${studentFolderName}/${fileName}`;
+
+            studentFolder?.file(fileName, blob);
+            studentManifestEntry.samples.push({
+              path: zipPath,
+              source: sample.source,
+              createdAt: sample.created_at,
+              status: sample.status ?? null,
+            });
+            exportedImageCount += 1;
+          } catch {
+            skippedImageCount += 1;
+          }
+        }
+
+        studentManifestEntry.sampleCount = studentManifestEntry.samples.length;
+        manifest.students.push(studentManifestEntry);
+      }
+
+      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+      const blob = await zip.generateAsync({ type: 'blob' });
+
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `student-face-samples-${new Date().toISOString().slice(0, 10)}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: 'ZIP exported',
+        description: `Exported ${exportedImageCount} face images for ${groups.length} students${skippedImageCount ? ` (${skippedImageCount} skipped)` : ''}.`,
+      });
+    } catch (error) {
+      console.error('Failed to export face samples zip:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not create backup ZIP file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingZip(false);
+    }
+  };
+
+  const handleImportStudentsZip = async (file: File) => {
+    setImportingZip(true);
+    try {
+      const zip = await JSZip.loadAsync(file);
+      const manifestText = await zip.file('manifest.json')?.async('string');
+
+      if (!manifestText) {
+        throw new Error('manifest.json is missing from this ZIP file.');
+      }
+
+      const manifest = JSON.parse(manifestText) as FaceSamplesZipManifest;
+      if (!manifest?.students || !Array.isArray(manifest.students)) {
+        throw new Error('Invalid ZIP format: students list is missing.');
+      }
+
+      let restoredStudents = 0;
+      let restoredImages = 0;
+
+      for (const student of manifest.students) {
+        const sourceFilters: string[] = [];
+        if (student.userId) sourceFilters.push(`user_id.eq.${student.userId}`);
+        if (student.employeeId) sourceFilters.push(`student_id.eq.${student.employeeId}`);
+
+        const restoredPaths: string[] = [];
+
+        for (let idx = 0; idx < student.samples.length; idx += 1) {
+          const sample = student.samples[idx];
+          const fileEntry = zip.file(sample.path);
+          if (!fileEntry) continue;
+
+          const blob = await fileEntry.async('blob');
+          const extensionMatch = sample.path.match(/\.[a-zA-Z0-9]+$/);
+          const extension = extensionMatch?.[0] || extensionFromMime(blob.type || 'image/jpeg');
+          const storagePath = `recovery/${slugifyPart(student.employeeId || student.userId || student.name)}/${Date.now()}-${idx}${extension}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('face-images')
+            .upload(storagePath, blob, {
+              upsert: false,
+              contentType: blob.type || 'image/jpeg',
+            });
+
+          if (uploadError) {
+            console.warn('Failed to upload imported image:', uploadError);
+            continue;
+          }
+
+          restoredPaths.push(storagePath);
+          restoredImages += 1;
+        }
+
+        if (restoredPaths.length === 0) continue;
+
+        const resolvedUserId = isUuid(student.userId) ? student.userId : crypto.randomUUID();
+
+        const registrationPayload: Record<string, any> = {
+          user_id: resolvedUserId,
+          status: 'registered',
+          source: 'zip-import',
+          capture_mode: 'recovery',
+          student_name: student.name,
+          student_id: student.employeeId || null,
+          image_url: restoredPaths[0],
+          timestamp: new Date().toISOString(),
+          category: 'A',
+          device_info: {
+            type: 'zip-import',
+            metadata: {
+              name: student.name,
+              employee_id: student.employeeId,
+              imported_from_zip: true,
+              imported_at: new Date().toISOString(),
+            },
+          },
+        };
+
+        if (sourceFilters.length > 0) {
+          const { data: existingRegistration } = await supabase
+            .from('attendance_records')
+            .select('id')
+            .eq('status', 'registered')
+            .or(sourceFilters.join(','))
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (existingRegistration?.id) {
+            await supabase
+              .from('attendance_records')
+              .update(registrationPayload)
+              .eq('id', existingRegistration.id);
+          } else {
+            await supabase.from('attendance_records').insert(registrationPayload);
+          }
+        } else {
+          await supabase.from('attendance_records').insert(registrationPayload);
+        }
+
+        const descriptorRows = restoredPaths.map((path) => ({
+          user_id: resolvedUserId,
+          image_url: path,
+          label: student.name,
+          student_id: student.employeeId || null,
+          student_name: student.name,
+          is_active: true,
+          metadata: {
+            imported_from_zip: true,
+            imported_at: new Date().toISOString(),
+            backup_version: manifest.version,
+          },
+        }));
+
+        const { error: descriptorInsertError } = await supabase
+          .from('face_descriptors')
+          .insert(descriptorRows);
+
+        if (descriptorInsertError) {
+          console.warn('Failed to insert imported face descriptors:', descriptorInsertError);
+        }
+
+        restoredStudents += 1;
+      }
+
+      toast({
+        title: 'ZIP imported',
+        description: `Restored ${restoredStudents} students and ${restoredImages} face images.`,
+      });
+
+      await fetchSamples();
+      syncDescriptorCache().catch(() => {});
+    } catch (error: any) {
+      console.error('Failed to import face samples zip:', error);
+      toast({
+        title: 'Import failed',
+        description: error?.message || 'Could not restore students from ZIP.',
+        variant: 'destructive',
+      });
+    } finally {
+      setImportingZip(false);
+      if (importZipInputRef.current) {
+        importZipInputRef.current.value = '';
+      }
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -1014,6 +1290,28 @@ const StudentFaceSamplesManager: React.FC = () => {
             <Button variant="outline" size="sm" onClick={fetchSamples}>
               <RefreshCw className="w-4 h-4 mr-1" /> Refresh
             </Button>
+            <Button variant="outline" size="sm" onClick={handleExportAllStudentsZip} disabled={exportingZip || loading || groups.length === 0}>
+              <Download className="w-4 h-4 mr-1" /> {exportingZip ? 'Exporting…' : 'Export ZIP'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importZipInputRef.current?.click()}
+              disabled={importingZip}
+            >
+              <Upload className="w-4 h-4 mr-1" /> {importingZip ? 'Importing…' : 'Import ZIP'}
+            </Button>
+            <input
+              ref={importZipInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden"
+              onChange={(event) => {
+                const selectedFile = event.target.files?.[0];
+                if (!selectedFile) return;
+                handleImportStudentsZip(selectedFile);
+              }}
+            />
           </div>
 
           <div className="flex flex-wrap gap-2">
