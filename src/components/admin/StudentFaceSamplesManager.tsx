@@ -1527,6 +1527,9 @@ const StudentFaceSamplesManager: React.FC = () => {
     }
   };
 
+  const selectedImportCount = selectedImportKeys.size;
+  const existingInImport = importCandidates.filter((candidate) => candidate.isExisting).length;
+
   return (
     <div className="space-y-4">
       <Card>
@@ -1579,10 +1582,47 @@ const StudentFaceSamplesManager: React.FC = () => {
               onChange={(event) => {
                 const selectedFile = event.target.files?.[0];
                 if (!selectedFile) return;
-                handleImportStudentsZip(selectedFile);
+                prepareImportStudentsZip(selectedFile);
               }}
             />
           </div>
+
+          {exportProgress && (
+            <div className="space-y-1 rounded-md border p-3 bg-muted/30">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{exportProgress.label}</span>
+                <span>{Math.min(exportProgress.current, exportProgress.total)} / {exportProgress.total}</span>
+              </div>
+              <Progress value={Math.round((Math.min(exportProgress.current, exportProgress.total) / Math.max(exportProgress.total, 1)) * 100)} />
+            </div>
+          )}
+
+          {importProgress && (
+            <div className="space-y-1 rounded-md border p-3 bg-muted/30">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{importProgress.label}</span>
+                <span>{Math.min(importProgress.current, importProgress.total)} / {importProgress.total}</span>
+              </div>
+              <Progress value={Math.round((Math.min(importProgress.current, importProgress.total) / Math.max(importProgress.total, 1)) * 100)} />
+            </div>
+          )}
+
+          {importSummary && (
+            <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CheckCircle2 className="w-4 h-4 text-primary" /> Import results
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="secondary">ZIP students: {importSummary.zipStudents}</Badge>
+                <Badge variant="secondary">Selected: {importSummary.selectedStudents}</Badge>
+                <Badge variant="default">Imported: {importSummary.importedStudents}</Badge>
+                <Badge variant="outline">Skipped existing: {importSummary.skippedExisting}</Badge>
+                <Badge variant="outline">Failed: {importSummary.failedStudents}</Badge>
+                <Badge variant="secondary">Images imported: {importSummary.importedImages}</Badge>
+                <Badge variant="outline">Images failed: {importSummary.failedImages}</Badge>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">{groups.length} Students</Badge>
@@ -1842,6 +1882,134 @@ const StudentFaceSamplesManager: React.FC = () => {
         }}
         onCropComplete={handleCropSave}
       />
+
+      <Dialog open={importDialogOpen} onOpenChange={(open) => (!importingZip ? setImportDialogOpen(open) : null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Import students from ZIP</DialogTitle>
+            <DialogDescription>
+              ZIP contains <strong>{importManifest?.students.length || 0}</strong> students. Already added: <strong>{existingInImport}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-md border p-3 space-y-3 bg-muted/20">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">Total in ZIP: {importCandidates.length}</Badge>
+                <Badge variant="secondary">Selected: {selectedImportCount}</Badge>
+                <Badge variant="outline">Already added: {existingInImport}</Badge>
+                <Badge variant="outline">New: {Math.max(importCandidates.length - existingInImport, 0)}</Badge>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs">If student ID already exists</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant={conflictMode === 'skip' ? 'default' : 'outline'} onClick={() => setConflictMode('skip')}>
+                    Skip existing
+                  </Button>
+                  <Button type="button" size="sm" variant={conflictMode === 'overwrite' ? 'default' : 'outline'} onClick={() => setConflictMode('overwrite')}>
+                    Overwrite existing
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectedImportKeys(new Set(importCandidates.map((candidate) => candidate.key)))}
+                >
+                  Select all
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const onlyNew = importCandidates.filter((candidate) => !candidate.isExisting).map((candidate) => candidate.key);
+                    setSelectedImportKeys(new Set(onlyNew));
+                  }}
+                >
+                  Select only new
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setSelectedImportKeys(new Set())}>
+                  Clear selection
+                </Button>
+              </div>
+            </div>
+
+            <ScrollArea className="h-[340px] rounded-md border p-2">
+              <div className="space-y-2">
+                {importCandidates.map((candidate) => {
+                  const details = candidate.student.details || {};
+                  const checked = selectedImportKeys.has(candidate.key);
+                  return (
+                    <label key={candidate.key} className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-muted/30">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(nextChecked) => {
+                          setSelectedImportKeys((prev) => {
+                            const next = new Set(prev);
+                            if (nextChecked) next.add(candidate.key);
+                            else next.delete(candidate.key);
+                            return next;
+                          });
+                        }}
+                      />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium truncate">{candidate.student.name}</p>
+                          <Badge variant="outline">ID: {candidate.student.employeeId || 'N/A'}</Badge>
+                          <Badge variant="secondary">{candidate.student.sampleCount} images</Badge>
+                          {candidate.isExisting ? (
+                            <Badge variant="destructive" className="text-[10px] gap-1">
+                              <AlertCircle className="w-3 h-3" /> Already added
+                            </Badge>
+                          ) : (
+                            <Badge variant="default" className="text-[10px]">New</Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-1">
+                          <span>Class: {details.class || '-'}</span>
+                          <span>Section: {details.section || '-'}</span>
+                          <span>Roll: {details.rollNumber || '-'}</span>
+                          <span>Blood: {details.bloodGroup || '-'}</span>
+                          <span>Parent: {details.parentName || '-'}</span>
+                          <span>Phone: {details.parentPhone || '-'}</span>
+                          <span>Email: {details.parentEmail || '-'}</span>
+                        </div>
+                        {candidate.isExisting && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Existing record: {candidate.existingName || 'Student'} ({candidate.existingStudentId || candidate.existingUserId || 'matched'})
+                          </p>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                if (importZipInputRef.current) importZipInputRef.current.value = '';
+              }}
+              disabled={importingZip}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleImportStudentsZip} disabled={importingZip || selectedImportCount === 0}>
+              {importingZip ? 'Importing…' : `Import selected (${selectedImportCount})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
