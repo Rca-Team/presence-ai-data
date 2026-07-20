@@ -1109,11 +1109,11 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
           disabled={!modelsLoaded || (faceCount === 0 && !isScanning) || isLoopScanning}
           className={`px-6 sm:px-8 ${
             isScanning 
-              ? 'bg-red-500 hover:bg-red-600' 
+              ? 'bg-destructive hover:bg-destructive/90' 
               : faceCount > 0
-                ? 'bg-primary hover:bg-primary/90'
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                 : 'bg-muted text-muted-foreground'
-          } text-primary-foreground shadow-lg ${isScanning ? 'shadow-destructive/25' : 'shadow-primary/25'}`}
+          } shadow-lg ${isScanning ? 'shadow-destructive/25 text-destructive-foreground' : 'shadow-primary/25'}`}
         >
           {!modelsLoaded ? (
             <>
