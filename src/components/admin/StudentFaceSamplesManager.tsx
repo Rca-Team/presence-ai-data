@@ -6,8 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Progress } from '@/components/ui/progress';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Search, User, Scissors, RefreshCw, ImageIcon, Trash2, ArrowRightLeft, ArrowLeft, UserX, Download, Upload } from 'lucide-react';
+import { Search, User, Scissors, RefreshCw, ImageIcon, Trash2, ArrowRightLeft, ArrowLeft, UserX, Download, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 import JSZip from 'jszip';
 import ImageCropper from './ImageCropper';
 import { uploadImage } from '@/services/face-recognition/StorageService';
@@ -44,6 +48,23 @@ type FaceSamplesZipManifest = {
     userId: string;
     employeeId: string;
     name: string;
+    details: {
+      class: string | null;
+      section: string | null;
+      rollNumber: string | null;
+      category: string | null;
+      bloodGroup: string | null;
+      parentName: string | null;
+      parentPhone: string | null;
+      parentEmail: string | null;
+      address: string | null;
+      transportMode: string | null;
+      phone: string | null;
+      email: string | null;
+      profileName: string | null;
+      username: string | null;
+      metadata: Record<string, any>;
+    };
     sampleCount: number;
     samples: Array<{
       path: string;
@@ -52,6 +73,31 @@ type FaceSamplesZipManifest = {
       status?: string | null;
     }>;
   }>;
+};
+
+type ImportCandidate = {
+  key: string;
+  student: FaceSamplesZipManifest['students'][number];
+  isExisting: boolean;
+  existingStudentId: string | null;
+  existingUserId: string | null;
+  existingName: string | null;
+};
+
+type OperationProgress = {
+  label: string;
+  current: number;
+  total: number;
+};
+
+type ImportSummary = {
+  zipStudents: number;
+  selectedStudents: number;
+  importedStudents: number;
+  skippedExisting: number;
+  failedStudents: number;
+  importedImages: number;
+  failedImages: number;
 };
 
 const isSlot = (s: FaceSample) => s.source_table === 'face_descriptors';
@@ -71,6 +117,12 @@ const extensionFromMime = (mimeType: string) => {
   if (mimeType.includes('bmp')) return '.bmp';
   if (mimeType.includes('gif')) return '.gif';
   return '.jpg';
+};
+
+const toOptionalText = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized ? normalized : null;
 };
 
 const parseStoragePathFromUrl = (value: string, bucket: string): string | null => {
