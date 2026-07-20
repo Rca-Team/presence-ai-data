@@ -183,6 +183,37 @@ const extensionFromMime = (mimeType: string) => {
   return '.jpg';
 };
 
+const normalizeZipPath = (value: string) =>
+  value
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+/g, '/')
+    .trim();
+
+const resolveZipFileEntry = (zip: JSZip, samplePath: string): JSZip.JSZipObject | null => {
+  const normalized = normalizeZipPath(samplePath);
+  if (!normalized) return null;
+
+  const direct = zip.file(normalized);
+  if (direct) return direct;
+
+  const withoutStudentsPrefix = normalized.replace(/^students\//i, '');
+  if (withoutStudentsPrefix !== normalized) {
+    const withoutPrefixFile = zip.file(withoutStudentsPrefix);
+    if (withoutPrefixFile) return withoutPrefixFile;
+  }
+
+  const targetTail = normalized.split('/').pop()?.toLowerCase();
+  if (!targetTail) return null;
+
+  const allFiles = Object.values(zip.files).filter((f) => !f.dir);
+  const byExactTail = allFiles.find((f) => normalizeZipPath(f.name).toLowerCase().endsWith(`/${targetTail}`) || normalizeZipPath(f.name).toLowerCase() === targetTail);
+  if (byExactTail) return byExactTail;
+
+  return null;
+};
+
 const toOptionalText = (value: unknown): string | null => {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
@@ -1451,8 +1482,9 @@ const StudentFaceSamplesManager: React.FC = () => {
             setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
             continue;
           }
-          const fileEntry = importPreparedZip.file(sample.path);
+          const fileEntry = resolveZipFileEntry(importPreparedZip, sample.path);
           if (!fileEntry) {
+            console.warn('ZIP image entry missing for path:', sample.path);
             failedImages += 1;
             setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
             continue;
@@ -1471,6 +1503,13 @@ const StudentFaceSamplesManager: React.FC = () => {
             });
 
           if (uploadError) {
+            console.warn('ZIP image upload failed:', {
+              studentId: student.employeeId || null,
+              userId: student.userId || null,
+              sourcePath: sample.path,
+              targetPath: storagePath,
+              message: uploadError.message,
+            });
             failedImages += 1;
             setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
             continue;
