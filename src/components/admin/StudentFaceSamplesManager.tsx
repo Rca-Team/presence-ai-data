@@ -1484,6 +1484,7 @@ const StudentFaceSamplesManager: React.FC = () => {
           }
           const fileEntry = resolveZipFileEntry(importPreparedZip, sample.path);
           if (!fileEntry) {
+            console.warn('ZIP image entry missing for path:', sample.path);
             failedImages += 1;
             setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
             continue;
@@ -1502,6 +1503,13 @@ const StudentFaceSamplesManager: React.FC = () => {
             });
 
           if (uploadError) {
+            console.warn('ZIP image upload failed:', {
+              studentId: student.employeeId || null,
+              userId: student.userId || null,
+              sourcePath: sample.path,
+              targetPath: storagePath,
+              message: uploadError.message,
+            });
             failedImages += 1;
             setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
             continue;
