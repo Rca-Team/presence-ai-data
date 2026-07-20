@@ -3,7 +3,7 @@
 // supabase function: mcp
 // Bundled from src/lib/mcp/index.ts by @lovable.dev/mcp-js.
 // <define:import.meta.env>
-var define_import_meta_env_default = { MODE: "production", BASE_URL: "/", DEV: false, PROD: true, SSR: false };
+var define_import_meta_env_default = { VITE_SUPABASE_URL: "https://eiahucigcvsnuvviajqt.supabase.co", VITE_SUPABASE_PUBLISHABLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVpYWh1Y2lnY3ZzbnV2dmlhanF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5MDA5NDEsImV4cCI6MjA5MzQ3Njk0MX0.nPl7U5Sm5Rm2zFnwLO3RzjOnkrIbrzEfFzSgkbLnX_I", MODE: "production", BASE_URL: "/", DEV: false, PROD: true, SSR: false };
 
 // src/lib/mcp/index.ts
 import { auth, defineMcp } from "npm:@lovable.dev/mcp-js@0.20.0";
@@ -158,7 +158,7 @@ var list_recent_gate_entries_default = defineTool2({
 
 // src/lib/mcp/index.ts
 var projectRefFromUrl = (() => {
-  const url = define_import_meta_env_default.VITE_SUPABASE_URL;
+  const url = "https://eiahucigcvsnuvviajqt.supabase.co";
   if (!url) return null;
   const match = url.match(/^https:\/\/([^.]+)\.supabase\.co/i);
   return match?.[1] || null;
