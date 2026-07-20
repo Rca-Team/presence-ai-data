@@ -12,6 +12,8 @@ interface Substitution {
   id: string;
   date: string;
   category: string;
+  class?: string | null;
+  section?: string | null;
   period_number: number;
   absent_teacher_name: string;
   absent_teacher_id: string;
@@ -25,7 +27,7 @@ interface Substitution {
 interface AbsentTeacher {
   record_id: string;
   name: string;
-  periods: { period_number: number; category: string; subject_id: string | null }[];
+  periods: { period_number: number; category: string; class?: string | null; section?: string | null; subject_id: string | null }[];
 }
 
 const SubstitutionReport: React.FC = () => {
@@ -40,6 +42,49 @@ const SubstitutionReport: React.FC = () => {
   const dayOfWeek = new Date().getDay(); // 0=Sun, 1=Mon...
   // Convert to our timetable format (1=Mon, 2=Tue, ..., 6=Sat)
   const ttDayOfWeek = dayOfWeek === 0 ? 7 : dayOfWeek;
+
+  const resolveTeacherId = (row: any): string | null => {
+    return row?.teacher_id || row?.teacher_record_id || row?.metadata?.teacher_id || row?.metadata?.teacher_record_id || null;
+  };
+
+  const resolveCategory = (row: any): string => {
+    if (typeof row?.category === 'string' && row.category.trim().length > 0) return row.category;
+    if (typeof row?.metadata?.category === 'string' && row.metadata.category.trim().length > 0) return row.metadata.category;
+    if (row?.class && row?.section) return `${row.class}-${row.section}`;
+    return 'Unknown';
+  };
+
+  const resolvePeriod = (row: any): number => Number(row?.period_number ?? row?.metadata?.period_number ?? 0);
+
+  const resolveSlotKey = (row: any): string => {
+    const period = resolvePeriod(row);
+    const className = row?.class ?? row?.metadata?.class ?? null;
+    const section = row?.section ?? row?.metadata?.section ?? null;
+    if (className && section) return `${className}-${section}-${period}`;
+    return `${resolveCategory(row)}-${period}`;
+  };
+
+  const mapSubstitution = (row: any): Substitution => {
+    const metadata = (row?.metadata || {}) as any;
+    const className = row?.class ?? metadata?.class ?? null;
+    const section = row?.section ?? metadata?.section ?? null;
+    const category = resolveCategory(row);
+    return {
+      id: row.id,
+      date: row.date,
+      category,
+      class: className,
+      section,
+      period_number: resolvePeriod(row),
+      absent_teacher_name: row.absent_teacher_name || metadata.absent_teacher_name || 'Unknown',
+      absent_teacher_id: row.absent_teacher_id || row.original_teacher_id || metadata.absent_teacher_id || row.id,
+      substitute_teacher_name: row.substitute_teacher_name || metadata.substitute_teacher_name || 'Unassigned',
+      substitute_teacher_id: row.substitute_teacher_id || metadata.substitute_teacher_id || '',
+      subject_id: row.subject_id || metadata.subject_id || null,
+      status: row.status || 'assigned',
+      auto_assigned: Boolean(row.auto_assigned ?? metadata.auto_assigned ?? false),
+    };
+  };
 
   const detectAbsentTeachers = useCallback(async () => {
     setIsLoading(true);
@@ -60,7 +105,15 @@ const SubstitutionReport: React.FC = () => {
       }
 
       // 2. Get unique teacher IDs from today's timetable
-      const scheduledTeacherIds = [...new Set(ttEntries.map(t => t.teacher_record_id))];
+      const scheduledTeacherIds = [...new Set((ttEntries || []).map(resolveTeacherId).filter(Boolean))] as string[];
+
+      if (scheduledTeacherIds.length === 0) {
+        toast({ title: 'No Timetable', description: 'Timetable entries exist but no teacher IDs were found.', variant: 'destructive' });
+        setAbsentTeachers([]);
+        setLoaded(true);
+        setIsLoading(false);
+        return;
+      }
 
       // 3. Check which teachers have attendance today
       const { data: todayAttendance } = await supabase
@@ -97,7 +150,8 @@ const SubstitutionReport: React.FC = () => {
       const absentMap = new Map<string, AbsentTeacher>();
 
       for (const entry of ttEntries) {
-        const teacherId = entry.teacher_record_id;
+        const teacherId = resolveTeacherId(entry);
+        if (!teacherId) continue;
         if (presentTeacherIds.has(teacherId)) continue; // Teacher is present
 
         if (!absentMap.has(teacherId)) {
@@ -108,9 +162,11 @@ const SubstitutionReport: React.FC = () => {
           });
         }
         absentMap.get(teacherId)!.periods.push({
-          period_number: entry.period_number,
-          category: entry.category,
-          subject_id: entry.subject_id,
+          period_number: resolvePeriod(entry),
+          category: resolveCategory(entry),
+          class: entry.class ?? entry.metadata?.class ?? null,
+          section: entry.section ?? entry.metadata?.section ?? null,
+          subject_id: entry.subject_id ?? entry.metadata?.subject_id ?? null,
         });
       }
 
@@ -121,10 +177,9 @@ const SubstitutionReport: React.FC = () => {
         .from('substitutions')
         .select('*')
         .eq('date', today)
-        .order('category')
         .order('period_number');
 
-      setSubstitutions(existingSubs || []);
+      setSubstitutions((existingSubs || []).map(mapSubstitution));
       setLoaded(true);
     } catch (e) {
       console.error(e);
@@ -153,7 +208,7 @@ const SubstitutionReport: React.FC = () => {
 
       const allTeachers = (allTeacherRegs || []).map(r => {
         const meta = (r.device_info as any)?.metadata || {};
-        return { record_id: r.id, name: meta.name || (r.device_info as any)?.name || 'Unknown' };
+        return { record_id: r.user_id || r.id, name: meta.name || (r.device_info as any)?.name || 'Unknown' };
       }).filter(t => t.name !== 'Unknown');
 
       // Check which teachers are present today
@@ -180,30 +235,35 @@ const SubstitutionReport: React.FC = () => {
         .select('*')
         .eq('date', today);
 
-      const existingSubKeys = new Set(
-        (existingSubs || []).map(s => `${s.category}-${s.period_number}`)
-      );
+      const existingSubRows = (existingSubs || []).map(mapSubstitution);
+      const existingSubKeys = new Set(existingSubRows.map(resolveSlotKey));
 
       // Build busy map: period -> set of busy teacher IDs
       const busyMap = new Map<number, Set<string>>();
       (ttEntries || []).forEach(entry => {
-        if (!busyMap.has(entry.period_number)) busyMap.set(entry.period_number, new Set());
-        busyMap.get(entry.period_number)!.add(entry.teacher_record_id);
+        const period = resolvePeriod(entry);
+        const teacherId = resolveTeacherId(entry);
+        if (!teacherId || period <= 0) return;
+        if (!busyMap.has(period)) busyMap.set(period, new Set());
+        busyMap.get(period)!.add(teacherId);
       });
 
       // Also mark substitute teachers as busy
-      (existingSubs || []).forEach(s => {
+      existingSubRows.forEach(s => {
+        if (!s.substitute_teacher_id || s.period_number <= 0) return;
         if (!busyMap.has(s.period_number)) busyMap.set(s.period_number, new Set());
         busyMap.get(s.period_number)!.add(s.substitute_teacher_id);
       });
 
       // Get all timetable entries to know which teachers teach which subjects
-      const { data: allTT } = await supabase.from('timetable').select('teacher_record_id, subject_id');
+      const { data: allTT } = await supabase.from('timetable').select('*');
       const teacherSubjects = new Map<string, Set<string>>();
       (allTT || []).forEach(t => {
-        if (!t.subject_id) return;
-        if (!teacherSubjects.has(t.teacher_record_id)) teacherSubjects.set(t.teacher_record_id, new Set());
-        teacherSubjects.get(t.teacher_record_id)!.add(t.subject_id);
+        const teacherId = resolveTeacherId(t);
+        const subjectId = t.subject_id ?? t.metadata?.subject_id;
+        if (!teacherId || !subjectId) return;
+        if (!teacherSubjects.has(teacherId)) teacherSubjects.set(teacherId, new Set());
+        teacherSubjects.get(teacherId)!.add(subjectId);
       });
 
       const newSubs: any[] = [];
@@ -211,7 +271,7 @@ const SubstitutionReport: React.FC = () => {
 
       for (const absent of absentTeachers) {
         for (const period of absent.periods) {
-          const key = `${period.category}-${period.period_number}`;
+          const key = `${period.class && period.section ? `${period.class}-${period.section}` : period.category}-${period.period_number}`;
           if (existingSubKeys.has(key)) continue; // Already has substitution
 
           const busyAtPeriod = busyMap.get(period.period_number) || new Set();
@@ -234,15 +294,24 @@ const SubstitutionReport: React.FC = () => {
             const substitute = sorted[0];
             newSubs.push({
               date: today,
-              category: period.category,
+              class: period.class || null,
+              section: period.section || null,
               period_number: period.period_number,
-              absent_teacher_id: absent.record_id,
-              absent_teacher_name: absent.name,
+              original_teacher_id: absent.record_id,
               substitute_teacher_id: substitute.record_id,
-              substitute_teacher_name: substitute.name,
-              subject_id: period.subject_id,
-              auto_assigned: true,
+              subject: null,
               status: 'assigned',
+              notes: `Auto substitution for period ${period.period_number}`,
+              metadata: {
+                category: period.category,
+                period_number: period.period_number,
+                absent_teacher_id: absent.record_id,
+                absent_teacher_name: absent.name,
+                substitute_teacher_id: substitute.record_id,
+                substitute_teacher_name: substitute.name,
+                subject_id: period.subject_id,
+                auto_assigned: true,
+              },
             });
 
             // Mark this teacher as busy for this period
@@ -376,7 +445,7 @@ const SubstitutionReport: React.FC = () => {
   }, {});
 
   // Unassigned absent periods
-  const assignedKeys = new Set(substitutions.map(s => `${s.category}-${s.period_number}`));
+      const assignedKeys = new Set(substitutions.map(s => `${s.class && s.section ? `${s.class}-${s.section}` : s.category}-${s.period_number}`));
   const unassignedPeriods = absentTeachers.flatMap(t =>
     t.periods.filter(p => !assignedKeys.has(`${p.category}-${p.period_number}`))
       .map(p => ({ ...p, teacherName: t.name }))
