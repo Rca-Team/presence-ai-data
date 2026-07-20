@@ -29,6 +29,7 @@ interface AttendanceRecord {
 const LiveAttendanceFeed: React.FC = () => {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [visibleCount, setVisibleCount] = useState(10);
+  const [profileAvatarByUserId, setProfileAvatarByUserId] = useState<Record<string, string>>({});
 
   const visibleRecords = useMemo(() => records.slice(0, visibleCount), [records, visibleCount]);
 
@@ -47,10 +48,32 @@ const LiveAttendanceFeed: React.FC = () => {
       }
       return `${STORAGE_BASE_URL}${record.image_url}`;
     }
-    // Check metadata for firebase_image_url
-    if (record.device_info?.metadata?.firebase_image_url) {
-      return record.device_info.metadata.firebase_image_url;
+
+    // Then check known metadata image fields
+    const metadata = record.device_info?.metadata;
+    if (metadata?.avatar_url && typeof metadata.avatar_url === 'string') {
+      return metadata.avatar_url;
     }
+    if (metadata?.photo_url && typeof metadata.photo_url === 'string') {
+      return metadata.photo_url;
+    }
+    if (metadata?.image_url && typeof metadata.image_url === 'string') {
+      if (metadata.image_url.startsWith('data:') || metadata.image_url.startsWith('http')) {
+        return metadata.image_url;
+      }
+      return `${STORAGE_BASE_URL}${metadata.image_url}`;
+    }
+
+    // Check metadata for firebase_image_url
+    if (metadata?.firebase_image_url) {
+      return metadata.firebase_image_url;
+    }
+
+    // Final fallback: fetch from profiles table by user_id
+    if (record.user_id && profileAvatarByUserId[record.user_id]) {
+      return profileAvatarByUserId[record.user_id];
+    }
+
     return null;
   };
 
@@ -96,6 +119,40 @@ const LiveAttendanceFeed: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    const fetchProfileImages = async () => {
+      const userIds = Array.from(new Set(records
+        .map((record) => record.user_id)
+        .filter((id): id is string => Boolean(id))));
+
+      if (!userIds.length) {
+        setProfileAvatarByUserId({});
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, avatar_url, photo_url, image_url')
+        .in('id', userIds);
+
+      if (error || !data) {
+        return;
+      }
+
+      const nextMap: Record<string, string> = {};
+      data.forEach((profile: any) => {
+        const image = profile.avatar_url || profile.photo_url || profile.image_url;
+        if (profile.id && image) {
+          nextMap[profile.id] = image;
+        }
+      });
+
+      setProfileAvatarByUserId(nextMap);
+    };
+
+    void fetchProfileImages();
+  }, [records]);
 
   return (
     <div className="h-full flex flex-col">
