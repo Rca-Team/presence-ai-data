@@ -1210,7 +1210,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
       {/* Quick Stats */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-5">
         {[
-          { icon: Zap, label: 'Speed', value: '<0.5s', color: 'text-yellow-500' },
+          { icon: Zap, label: 'Speed', value: '<1-2s', color: 'text-yellow-500' },
           { icon: Target, label: 'Accuracy', value: '50%', color: 'text-green-500' },
           { icon: Shield, label: 'Secure', value: 'AES-256', color: 'text-blue-500' },
         ].map((stat, i) => (
