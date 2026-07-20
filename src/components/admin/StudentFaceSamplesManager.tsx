@@ -1942,7 +1942,7 @@ const StudentFaceSamplesManager: React.FC = () => {
             <ScrollArea className="h-[340px] rounded-md border p-2">
               <div className="space-y-2">
                 {importCandidates.map((candidate) => {
-                  const details = candidate.student.details || {};
+                  const details = candidate.student.details;
                   const checked = selectedImportKeys.has(candidate.key);
                   return (
                     <label key={candidate.key} className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-muted/30">
