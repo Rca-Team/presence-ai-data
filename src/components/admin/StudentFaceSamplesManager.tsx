@@ -6,8 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Progress } from '@/components/ui/progress';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Search, User, Scissors, RefreshCw, ImageIcon, Trash2, ArrowRightLeft, ArrowLeft, UserX, Download, Upload } from 'lucide-react';
+import { Search, User, Scissors, RefreshCw, ImageIcon, Trash2, ArrowRightLeft, ArrowLeft, UserX, Download, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 import JSZip from 'jszip';
 import ImageCropper from './ImageCropper';
 import { uploadImage } from '@/services/face-recognition/StorageService';
@@ -44,6 +48,23 @@ type FaceSamplesZipManifest = {
     userId: string;
     employeeId: string;
     name: string;
+    details: {
+      class: string | null;
+      section: string | null;
+      rollNumber: string | null;
+      category: string | null;
+      bloodGroup: string | null;
+      parentName: string | null;
+      parentPhone: string | null;
+      parentEmail: string | null;
+      address: string | null;
+      transportMode: string | null;
+      phone: string | null;
+      email: string | null;
+      profileName: string | null;
+      username: string | null;
+      metadata: Record<string, any>;
+    };
     sampleCount: number;
     samples: Array<{
       path: string;
@@ -52,6 +73,31 @@ type FaceSamplesZipManifest = {
       status?: string | null;
     }>;
   }>;
+};
+
+type ImportCandidate = {
+  key: string;
+  student: FaceSamplesZipManifest['students'][number];
+  isExisting: boolean;
+  existingStudentId: string | null;
+  existingUserId: string | null;
+  existingName: string | null;
+};
+
+type OperationProgress = {
+  label: string;
+  current: number;
+  total: number;
+};
+
+type ImportSummary = {
+  zipStudents: number;
+  selectedStudents: number;
+  importedStudents: number;
+  skippedExisting: number;
+  failedStudents: number;
+  importedImages: number;
+  failedImages: number;
 };
 
 const isSlot = (s: FaceSample) => s.source_table === 'face_descriptors';
@@ -71,6 +117,12 @@ const extensionFromMime = (mimeType: string) => {
   if (mimeType.includes('bmp')) return '.bmp';
   if (mimeType.includes('gif')) return '.gif';
   return '.jpg';
+};
+
+const toOptionalText = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized ? normalized : null;
 };
 
 const parseStoragePathFromUrl = (value: string, bucket: string): string | null => {
@@ -186,6 +238,15 @@ const StudentFaceSamplesManager: React.FC = () => {
   const [reregisteringStudent, setReregisteringStudent] = useState(false);
   const [exportingZip, setExportingZip] = useState(false);
   const [importingZip, setImportingZip] = useState(false);
+  const [exportProgress, setExportProgress] = useState<OperationProgress | null>(null);
+  const [importProgress, setImportProgress] = useState<OperationProgress | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importPreparedZip, setImportPreparedZip] = useState<JSZip | null>(null);
+  const [importManifest, setImportManifest] = useState<FaceSamplesZipManifest | null>(null);
+  const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([]);
+  const [selectedImportKeys, setSelectedImportKeys] = useState<Set<string>>(new Set());
+  const [conflictMode, setConflictMode] = useState<'overwrite' | 'skip'>('skip');
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
   const [selectedSampleIds, setSelectedSampleIds] = useState<Set<string>>(new Set());
 
   const importZipInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -1028,6 +1089,33 @@ const StudentFaceSamplesManager: React.FC = () => {
 
     setExportingZip(true);
     try {
+      const [registeredRowsRes, profilesRes] = await Promise.all([
+        supabase
+          .from('attendance_records')
+          .select('user_id, student_id, student_name, category, class, section, roll_number, device_info, status, timestamp')
+          .eq('status', 'registered')
+          .order('timestamp', { ascending: false }),
+        supabase
+          .from('profiles')
+          .select('user_id, display_name, full_name, username, email, phone, parent_name, parent_email, class, section, metadata'),
+      ]);
+
+      if (registeredRowsRes.error) throw registeredRowsRes.error;
+      if (profilesRes.error) throw profilesRes.error;
+
+      const profileByUserId = new Map<string, any>();
+      (profilesRes.data || []).forEach((profile: any) => {
+        if (profile?.user_id) profileByUserId.set(profile.user_id, profile);
+      });
+      const registeredRows = registeredRowsRes.data || [];
+
+      const totalImages = groups.reduce((sum, group) => sum + group.samples.filter((sample) => !!sample.image_url).length, 0);
+      setExportProgress({
+        label: totalImages > 0 ? 'Preparing student images for export...' : 'Preparing ZIP...',
+        current: 0,
+        total: Math.max(totalImages, 1),
+      });
+
       const zip = new JSZip();
       const studentsRoot = zip.folder('students');
       const manifest: FaceSamplesZipManifest = {
@@ -1043,24 +1131,47 @@ const StudentFaceSamplesManager: React.FC = () => {
       for (const group of groups) {
         const studentFolderName = `${slugifyPart(group.employeeId || 'no-id')}-${slugifyPart(group.name)}`;
         const studentFolder = studentsRoot?.folder(studentFolderName);
+
+        const matchById = registeredRows.find((row: any) => String(row.student_id || '').trim() && String(row.student_id || '').trim() === String(group.employeeId || '').trim());
+        const matchByUser = registeredRows.find((row: any) => String(row.user_id || '').trim() && String(row.user_id || '').trim() === String(group.userId || '').trim());
+        const bestRow: any = matchById || matchByUser || null;
+        const bestProfile = (bestRow?.user_id && profileByUserId.get(bestRow.user_id)) || profileByUserId.get(group.userId) || null;
+        const metadata = (bestRow?.device_info as any)?.metadata || {};
+
         const studentManifestEntry: FaceSamplesZipManifest['students'][number] = {
           userId: group.userId,
           employeeId: group.employeeId,
           name: group.name,
+          details: {
+            class: toOptionalText(bestRow?.class || bestProfile?.class || metadata.class),
+            section: toOptionalText(bestRow?.section || bestProfile?.section || metadata.section),
+            rollNumber: toOptionalText(bestRow?.roll_number || metadata.roll_number || metadata.employee_id || bestRow?.student_id || group.employeeId),
+            category: toOptionalText(bestRow?.category || metadata.category),
+            bloodGroup: toOptionalText(metadata.blood_group),
+            parentName: toOptionalText(bestProfile?.parent_name || metadata.parent_name),
+            parentPhone: toOptionalText(bestProfile?.phone || metadata.parent_phone || metadata.phone),
+            parentEmail: toOptionalText(bestProfile?.parent_email || metadata.parent_email),
+            address: toOptionalText(metadata.address),
+            transportMode: toOptionalText(metadata.transport_mode),
+            phone: toOptionalText(bestProfile?.phone || metadata.phone),
+            email: toOptionalText(bestProfile?.email || metadata.email),
+            profileName: toOptionalText(bestProfile?.display_name || bestProfile?.full_name || bestRow?.student_name),
+            username: toOptionalText(bestProfile?.username),
+            metadata: metadata && typeof metadata === 'object' ? metadata : {},
+          },
           sampleCount: 0,
           samples: [],
         };
 
         const imageSamples = group.samples.filter((sample) => !!sample.image_url);
-
         for (let index = 0; index < imageSamples.length; index += 1) {
           const sample = imageSamples[index];
           if (!sample.image_url) continue;
-
           try {
             const response = await fetch(sample.image_url);
             if (!response.ok) {
               skippedImageCount += 1;
+              setExportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
               continue;
             }
 
@@ -1077,8 +1188,10 @@ const StudentFaceSamplesManager: React.FC = () => {
               status: sample.status ?? null,
             });
             exportedImageCount += 1;
+            setExportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
           } catch {
             skippedImageCount += 1;
+            setExportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
           }
         }
 
@@ -1102,45 +1215,129 @@ const StudentFaceSamplesManager: React.FC = () => {
       });
     } catch (error) {
       console.error('Failed to export face samples zip:', error);
-      toast({
-        title: 'Export failed',
-        description: 'Could not create backup ZIP file.',
-        variant: 'destructive',
-      });
+      toast({ title: 'Export failed', description: 'Could not create backup ZIP file.', variant: 'destructive' });
     } finally {
       setExportingZip(false);
+      setExportProgress(null);
     }
   };
 
-  const handleImportStudentsZip = async (file: File) => {
-    setImportingZip(true);
+  const prepareImportStudentsZip = async (file: File) => {
+    setImportSummary(null);
     try {
       const zip = await JSZip.loadAsync(file);
       const manifestText = await zip.file('manifest.json')?.async('string');
-
-      if (!manifestText) {
-        throw new Error('manifest.json is missing from this ZIP file.');
-      }
+      if (!manifestText) throw new Error('manifest.json is missing from this ZIP file.');
 
       const manifest = JSON.parse(manifestText) as FaceSamplesZipManifest;
       if (!manifest?.students || !Array.isArray(manifest.students)) {
         throw new Error('Invalid ZIP format: students list is missing.');
       }
 
-      let restoredStudents = 0;
-      let restoredImages = 0;
+      const [existingByStudentIdRes, existingByUserIdRes] = await Promise.all([
+        supabase
+          .from('attendance_records')
+          .select('id, user_id, student_id, student_name, status, updated_at')
+          .eq('status', 'registered')
+          .not('student_id', 'is', null)
+          .order('updated_at', { ascending: false }),
+        supabase
+          .from('attendance_records')
+          .select('id, user_id, student_id, student_name, status, updated_at')
+          .eq('status', 'registered')
+          .not('user_id', 'is', null)
+          .order('updated_at', { ascending: false }),
+      ]);
+      if (existingByStudentIdRes.error) throw existingByStudentIdRes.error;
+      if (existingByUserIdRes.error) throw existingByUserIdRes.error;
 
-      for (const student of manifest.students) {
+      const byStudentId = new Map<string, any>();
+      (existingByStudentIdRes.data || []).forEach((row: any) => {
+        const key = String(row.student_id || '').trim();
+        if (key && !byStudentId.has(key)) byStudentId.set(key, row);
+      });
+      const byUserId = new Map<string, any>();
+      (existingByUserIdRes.data || []).forEach((row: any) => {
+        const key = String(row.user_id || '').trim();
+        if (key && !byUserId.has(key)) byUserId.set(key, row);
+      });
+
+      const nextCandidates: ImportCandidate[] = manifest.students.map((student, index) => {
+        const existing =
+          (student.employeeId ? byStudentId.get(student.employeeId) : null) ||
+          (student.userId ? byUserId.get(student.userId) : null) ||
+          null;
+        return {
+          key: `${student.employeeId || student.userId || student.name || 'student'}-${index}`,
+          student,
+          isExisting: Boolean(existing),
+          existingStudentId: existing?.student_id || null,
+          existingUserId: existing?.user_id || null,
+          existingName: existing?.student_name || null,
+        };
+      });
+
+      setImportPreparedZip(zip);
+      setImportManifest(manifest);
+      setImportCandidates(nextCandidates);
+      setSelectedImportKeys(new Set(nextCandidates.map((candidate) => candidate.key)));
+      setImportDialogOpen(true);
+
+      toast({ title: 'ZIP loaded', description: `Found ${manifest.students.length} students in this backup ZIP.` });
+    } catch (error: any) {
+      console.error('Failed to parse face samples zip:', error);
+      toast({ title: 'Invalid ZIP', description: error?.message || 'Could not read this ZIP backup.', variant: 'destructive' });
+      if (importZipInputRef.current) importZipInputRef.current.value = '';
+    }
+  };
+
+  const handleImportStudentsZip = async () => {
+    if (!importPreparedZip || !importManifest) return;
+    const selectedCandidates = importCandidates.filter((candidate) => selectedImportKeys.has(candidate.key));
+    if (selectedCandidates.length === 0) {
+      toast({ title: 'No students selected', description: 'Select at least one student to import.' });
+      return;
+    }
+
+    setImportingZip(true);
+    setImportDialogOpen(false);
+
+    const totalImagesToProcess = selectedCandidates.reduce((sum, candidate) => sum + (candidate.student.samples?.length || 0), 0);
+    setImportProgress({
+      label: 'Importing student images and records...',
+      current: 0,
+      total: Math.max(totalImagesToProcess, 1),
+    });
+
+    try {
+      let restoredStudents = 0;
+      let skippedExisting = 0;
+      let failedStudents = 0;
+      let restoredImages = 0;
+      let failedImages = 0;
+
+      for (const candidate of selectedCandidates) {
+        const student = candidate.student;
+        if (candidate.isExisting && conflictMode === 'skip') {
+          skippedExisting += 1;
+          continue;
+        }
+
         const sourceFilters: string[] = [];
         if (student.userId) sourceFilters.push(`user_id.eq.${student.userId}`);
         if (student.employeeId) sourceFilters.push(`student_id.eq.${student.employeeId}`);
 
         const restoredPaths: string[] = [];
+        let studentFailed = false;
 
         for (let idx = 0; idx < student.samples.length; idx += 1) {
           const sample = student.samples[idx];
-          const fileEntry = zip.file(sample.path);
-          if (!fileEntry) continue;
+          const fileEntry = importPreparedZip.file(sample.path);
+          if (!fileEntry) {
+            failedImages += 1;
+            setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
+            continue;
+          }
 
           const blob = await fileEntry.async('blob');
           const extensionMatch = sample.path.match(/\.[a-zA-Z0-9]+$/);
@@ -1155,89 +1352,159 @@ const StudentFaceSamplesManager: React.FC = () => {
             });
 
           if (uploadError) {
-            console.warn('Failed to upload imported image:', uploadError);
+            failedImages += 1;
+            setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
             continue;
           }
 
           restoredPaths.push(storagePath);
           restoredImages += 1;
+          setImportProgress((prev) => prev ? { ...prev, current: Math.min(prev.total, prev.current + 1) } : prev);
         }
 
-        if (restoredPaths.length === 0) continue;
+        if (restoredPaths.length === 0) {
+          failedStudents += 1;
+          continue;
+        }
 
-        const resolvedUserId = isUuid(student.userId) ? student.userId : crypto.randomUUID();
-
-        const registrationPayload: Record<string, any> = {
-          user_id: resolvedUserId,
-          status: 'registered',
-          source: 'zip-import',
-          capture_mode: 'recovery',
-          student_name: student.name,
-          student_id: student.employeeId || null,
-          image_url: restoredPaths[0],
-          timestamp: new Date().toISOString(),
-          category: 'A',
-          device_info: {
-            type: 'zip-import',
-            metadata: {
-              name: student.name,
-              employee_id: student.employeeId,
-              imported_from_zip: true,
-              imported_at: new Date().toISOString(),
-            },
-          },
-        };
-
-        if (sourceFilters.length > 0) {
-          const { data: existingRegistration } = await supabase
+        try {
+          const existingQuery = supabase
             .from('attendance_records')
-            .select('id')
+            .select('id, user_id, student_id')
             .eq('status', 'registered')
-            .or(sourceFilters.join(','))
             .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .limit(1);
 
-          if (existingRegistration?.id) {
-            await supabase
+          const { data: existingRegistration, error: existingRegistrationError } =
+            sourceFilters.length > 0
+              ? await existingQuery.or(sourceFilters.join(',')).maybeSingle()
+              : await existingQuery.maybeSingle();
+          if (existingRegistrationError) throw existingRegistrationError;
+
+          const resolvedUserId =
+            (existingRegistration?.user_id && isUuid(existingRegistration.user_id) ? existingRegistration.user_id : null) ||
+            (isUuid(student.userId) ? student.userId : null) ||
+            crypto.randomUUID();
+
+          const details = student.details || {
+            class: null,
+            section: null,
+            rollNumber: null,
+            category: null,
+            bloodGroup: null,
+            parentName: null,
+            parentPhone: null,
+            parentEmail: null,
+            address: null,
+            transportMode: null,
+            phone: null,
+            email: null,
+            profileName: null,
+            username: null,
+            metadata: {},
+          };
+
+          const registrationPayload: Record<string, any> = {
+            user_id: resolvedUserId,
+            status: 'registered',
+            source: 'zip-import',
+            capture_mode: 'recovery',
+            student_name: student.name,
+            student_id: student.employeeId || null,
+            image_url: restoredPaths[0],
+            timestamp: new Date().toISOString(),
+            category: details.category || 'A',
+            class: details.class || null,
+            section: details.section || null,
+            roll_number: details.rollNumber || student.employeeId || null,
+            device_info: {
+              type: 'zip-import',
+              metadata: {
+                ...((details.metadata && typeof details.metadata === 'object' ? details.metadata : {}) as Record<string, any>),
+                name: student.name,
+                employee_id: student.employeeId,
+                roll_number: details.rollNumber || student.employeeId || null,
+                class: details.class || null,
+                section: details.section || null,
+                category: details.category || 'A',
+                blood_group: details.bloodGroup || null,
+                parent_name: details.parentName || null,
+                parent_phone: details.parentPhone || null,
+                parent_email: details.parentEmail || null,
+                address: details.address || null,
+                transport_mode: details.transportMode || null,
+                imported_from_zip: true,
+                imported_at: new Date().toISOString(),
+              },
+            },
+          };
+
+          if (conflictMode === 'overwrite' && existingRegistration?.id) {
+            const identifierFilters = [
+              existingRegistration.user_id ? `user_id.eq.${existingRegistration.user_id}` : '',
+              student.employeeId ? `student_id.eq.${student.employeeId}` : '',
+            ].filter(Boolean);
+
+            if (identifierFilters.length > 0) {
+              const { error: descriptorDeleteError } = await supabase
+                .from('face_descriptors')
+                .delete()
+                .or(identifierFilters.join(','));
+              if (descriptorDeleteError) throw descriptorDeleteError;
+            }
+
+            const { error: updateExistingError } = await supabase
               .from('attendance_records')
               .update(registrationPayload)
               .eq('id', existingRegistration.id);
+            if (updateExistingError) throw updateExistingError;
           } else {
-            await supabase.from('attendance_records').insert(registrationPayload);
+            const { error: insertRegistrationError } = await supabase.from('attendance_records').insert(registrationPayload);
+            if (insertRegistrationError) throw insertRegistrationError;
           }
-        } else {
-          await supabase.from('attendance_records').insert(registrationPayload);
+
+          const descriptorRows = restoredPaths.map((path) => ({
+            user_id: resolvedUserId,
+            image_url: path,
+            label: student.name,
+            student_id: student.employeeId || null,
+            student_name: student.name,
+            is_active: true,
+            metadata: {
+              imported_from_zip: true,
+              imported_at: new Date().toISOString(),
+              backup_version: importManifest.version,
+            },
+          }));
+
+          const { error: descriptorInsertError } = await supabase
+            .from('face_descriptors')
+            .insert(descriptorRows);
+          if (descriptorInsertError) throw descriptorInsertError;
+
+          restoredStudents += 1;
+        } catch (error) {
+          console.warn('Failed to import student from ZIP:', student.employeeId || student.userId, error);
+          studentFailed = true;
         }
 
-        const descriptorRows = restoredPaths.map((path) => ({
-          user_id: resolvedUserId,
-          image_url: path,
-          label: student.name,
-          student_id: student.employeeId || null,
-          student_name: student.name,
-          is_active: true,
-          metadata: {
-            imported_from_zip: true,
-            imported_at: new Date().toISOString(),
-            backup_version: manifest.version,
-          },
-        }));
-
-        const { error: descriptorInsertError } = await supabase
-          .from('face_descriptors')
-          .insert(descriptorRows);
-
-        if (descriptorInsertError) {
-          console.warn('Failed to insert imported face descriptors:', descriptorInsertError);
-        }
-
-        restoredStudents += 1;
+        if (studentFailed) failedStudents += 1;
       }
+
+      const summary: ImportSummary = {
+        zipStudents: importManifest.students.length,
+        selectedStudents: selectedCandidates.length,
+        importedStudents: restoredStudents,
+        skippedExisting,
+        failedStudents,
+        importedImages: restoredImages,
+        failedImages,
+      };
+      setImportSummary(summary);
 
       toast({
         title: 'ZIP imported',
-        description: `Restored ${restoredStudents} students and ${restoredImages} face images.`,
+        description: `Imported ${restoredStudents} students (${skippedExisting} skipped, ${failedStudents} failed).`,
       });
 
       await fetchSamples();
@@ -1251,11 +1518,17 @@ const StudentFaceSamplesManager: React.FC = () => {
       });
     } finally {
       setImportingZip(false);
-      if (importZipInputRef.current) {
-        importZipInputRef.current.value = '';
-      }
+      setImportProgress(null);
+      if (importZipInputRef.current) importZipInputRef.current.value = '';
+      setImportPreparedZip(null);
+      setImportManifest(null);
+      setImportCandidates([]);
+      setSelectedImportKeys(new Set());
     }
   };
+
+  const selectedImportCount = selectedImportKeys.size;
+  const existingInImport = importCandidates.filter((candidate) => candidate.isExisting).length;
 
   return (
     <div className="space-y-4">
@@ -1309,10 +1582,47 @@ const StudentFaceSamplesManager: React.FC = () => {
               onChange={(event) => {
                 const selectedFile = event.target.files?.[0];
                 if (!selectedFile) return;
-                handleImportStudentsZip(selectedFile);
+                prepareImportStudentsZip(selectedFile);
               }}
             />
           </div>
+
+          {exportProgress && (
+            <div className="space-y-1 rounded-md border p-3 bg-muted/30">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{exportProgress.label}</span>
+                <span>{Math.min(exportProgress.current, exportProgress.total)} / {exportProgress.total}</span>
+              </div>
+              <Progress value={Math.round((Math.min(exportProgress.current, exportProgress.total) / Math.max(exportProgress.total, 1)) * 100)} />
+            </div>
+          )}
+
+          {importProgress && (
+            <div className="space-y-1 rounded-md border p-3 bg-muted/30">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{importProgress.label}</span>
+                <span>{Math.min(importProgress.current, importProgress.total)} / {importProgress.total}</span>
+              </div>
+              <Progress value={Math.round((Math.min(importProgress.current, importProgress.total) / Math.max(importProgress.total, 1)) * 100)} />
+            </div>
+          )}
+
+          {importSummary && (
+            <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CheckCircle2 className="w-4 h-4 text-primary" /> Import results
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="secondary">ZIP students: {importSummary.zipStudents}</Badge>
+                <Badge variant="secondary">Selected: {importSummary.selectedStudents}</Badge>
+                <Badge variant="default">Imported: {importSummary.importedStudents}</Badge>
+                <Badge variant="outline">Skipped existing: {importSummary.skippedExisting}</Badge>
+                <Badge variant="outline">Failed: {importSummary.failedStudents}</Badge>
+                <Badge variant="secondary">Images imported: {importSummary.importedImages}</Badge>
+                <Badge variant="outline">Images failed: {importSummary.failedImages}</Badge>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">{groups.length} Students</Badge>
@@ -1572,6 +1882,134 @@ const StudentFaceSamplesManager: React.FC = () => {
         }}
         onCropComplete={handleCropSave}
       />
+
+      <Dialog open={importDialogOpen} onOpenChange={(open) => (!importingZip ? setImportDialogOpen(open) : null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Import students from ZIP</DialogTitle>
+            <DialogDescription>
+              ZIP contains <strong>{importManifest?.students.length || 0}</strong> students. Already added: <strong>{existingInImport}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-md border p-3 space-y-3 bg-muted/20">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">Total in ZIP: {importCandidates.length}</Badge>
+                <Badge variant="secondary">Selected: {selectedImportCount}</Badge>
+                <Badge variant="outline">Already added: {existingInImport}</Badge>
+                <Badge variant="outline">New: {Math.max(importCandidates.length - existingInImport, 0)}</Badge>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs">If student ID already exists</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant={conflictMode === 'skip' ? 'default' : 'outline'} onClick={() => setConflictMode('skip')}>
+                    Skip existing
+                  </Button>
+                  <Button type="button" size="sm" variant={conflictMode === 'overwrite' ? 'default' : 'outline'} onClick={() => setConflictMode('overwrite')}>
+                    Overwrite existing
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectedImportKeys(new Set(importCandidates.map((candidate) => candidate.key)))}
+                >
+                  Select all
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const onlyNew = importCandidates.filter((candidate) => !candidate.isExisting).map((candidate) => candidate.key);
+                    setSelectedImportKeys(new Set(onlyNew));
+                  }}
+                >
+                  Select only new
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setSelectedImportKeys(new Set())}>
+                  Clear selection
+                </Button>
+              </div>
+            </div>
+
+            <ScrollArea className="h-[340px] rounded-md border p-2">
+              <div className="space-y-2">
+                {importCandidates.map((candidate) => {
+                  const details = candidate.student.details;
+                  const checked = selectedImportKeys.has(candidate.key);
+                  return (
+                    <label key={candidate.key} className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-muted/30">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(nextChecked) => {
+                          setSelectedImportKeys((prev) => {
+                            const next = new Set(prev);
+                            if (nextChecked) next.add(candidate.key);
+                            else next.delete(candidate.key);
+                            return next;
+                          });
+                        }}
+                      />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium truncate">{candidate.student.name}</p>
+                          <Badge variant="outline">ID: {candidate.student.employeeId || 'N/A'}</Badge>
+                          <Badge variant="secondary">{candidate.student.sampleCount} images</Badge>
+                          {candidate.isExisting ? (
+                            <Badge variant="destructive" className="text-[10px] gap-1">
+                              <AlertCircle className="w-3 h-3" /> Already added
+                            </Badge>
+                          ) : (
+                            <Badge variant="default" className="text-[10px]">New</Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-1">
+                          <span>Class: {details.class || '-'}</span>
+                          <span>Section: {details.section || '-'}</span>
+                          <span>Roll: {details.rollNumber || '-'}</span>
+                          <span>Blood: {details.bloodGroup || '-'}</span>
+                          <span>Parent: {details.parentName || '-'}</span>
+                          <span>Phone: {details.parentPhone || '-'}</span>
+                          <span>Email: {details.parentEmail || '-'}</span>
+                        </div>
+                        {candidate.isExisting && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Existing record: {candidate.existingName || 'Student'} ({candidate.existingStudentId || candidate.existingUserId || 'matched'})
+                          </p>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                if (importZipInputRef.current) importZipInputRef.current.value = '';
+              }}
+              disabled={importingZip}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleImportStudentsZip} disabled={importingZip || selectedImportCount === 0}>
+              {importingZip ? 'Importing…' : `Import selected (${selectedImportCount})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
