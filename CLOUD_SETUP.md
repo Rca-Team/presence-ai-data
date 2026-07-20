@@ -1,151 +1,133 @@
-# Cloud Setup Guide (This Project)
+# Lovable Cloud Setup (AI + Database + Storage)
 
-This document explains how to run and deploy this app with its cloud backend.
+This file is only for setting up **Lovable Cloud** so this project runs correctly with:
 
-## 1) What this project expects
-
-The app is a Vite + React frontend that connects to a cloud backend using:
-
-- `VITE_SUPABASE_URL` (backend project URL)
-- `VITE_SUPABASE_PUBLISHABLE_KEY` (public client key)
-
-These names are required by the current code in `src/integrations/supabase/client.ts`.
+- AI features
+- Database tables
+- Storage buckets (face images)
 
 ---
 
-## 2) Backend project used by current code
+## 1) Required Cloud services for this project
 
-Current configured backend project ref (from `supabase/config.toml`):
+Enable/confirm these in Lovable Cloud:
+
+1. **Cloud backend enabled**
+2. **Database enabled**
+3. **Storage enabled**
+4. **Auth enabled**
+5. **Lovable AI enabled**
+
+---
+
+## 2) Environment variables required by frontend
+
+The frontend expects these variables:
+
+```env
+VITE_SUPABASE_URL=YOUR_LOVABLE_CLOUD_PROJECT_URL
+VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_LOVABLE_CLOUD_PUBLISHABLE_KEY
+```
+
+This project currently points to backend ref:
 
 - `eiahucigcvsnuvviajqt`
 
-Current default URL used in project files:
-
-- `https://eiahucigcvsnuvviajqt.supabase.co`
-
-> Note: The app includes fallback credentials in some files for convenience, but for production you should always set environment variables explicitly.
+If you use a different Lovable Cloud project, update both env vars accordingly.
 
 ---
 
-## 3) Local setup
+## 3) Database setup checklist
 
-### Prerequisites
+For this app to function (attendance + face sample admin), confirm these tables exist and are accessible with correct policies:
 
-- Node.js 20+ (or Bun)
-- Bun installed (`npm i -g bun`) recommended for this repo
+- `profiles`
+- `attendance_records`
+- `face_descriptors`
+- any gate/notification/email tables used by your enabled features
 
-### Steps
+Also verify:
 
-1. Install dependencies:
-
-```bash
-bun install
-```
-
-2. Create `.env` in project root:
-
-```env
-VITE_SUPABASE_URL=https://eiahucigcvsnuvviajqt.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
-```
-
-3. Run dev server:
-
-```bash
-bun run dev
-```
-
-4. Build production bundle:
-
-```bash
-bun run build
-```
+- Row-level security/policies allow intended read/write paths
+- Admin actions can insert/update/delete where needed
 
 ---
 
-## 4) Hosting setup (Vercel)
+## 4) Storage setup checklist
 
-This repo already includes `vercel.json` with:
+Create/verify storage bucket:
 
-- Install: `bun install --frozen-lockfile`
-- Build: `bun run build`
-- Output: `dist`
-- SPA rewrite to `index.html`
+- **Bucket name:** `face-images`
 
-Set these environment variables in Vercel Project Settings:
+Policies must allow the operations used in app flows:
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
-
-Then deploy.
+- upload face images
+- read face images
+- delete/rewrite during cleanup or re-import
 
 ---
 
-## 5) Cloud backend checklist for features in this app
+## 5) Lovable AI setup checklist
 
-To make key features work (attendance, face samples, admin tools), confirm your backend has:
+To run AI-backed features reliably:
 
-- Auth enabled (email/password and any social login you use)
-- Storage bucket for face images (`face-images`)
-- Tables used by app flows (for example):
-  - `profiles`
-  - `attendance_records`
-  - `face_descriptors`
-  - gate/notification/email-related tables used by your deployed functions
-- RLS/policies configured so the app can read/write as intended
-
-If you changed backend schema recently, regenerate/update typed DB types so frontend types match the live schema.
+1. Enable **Lovable AI** for the project.
+2. Ensure `LOVABLE_API_KEY` exists in project secrets (auto-managed by Lovable).
+3. Keep AI calls on server/edge functions only (never expose private key in frontend).
+4. Surface AI errors in UI (especially 429 rate-limit and 402 credits).
 
 ---
 
-## 6) Edge/server functions in this repo
+## 6) Edge function readiness
 
-This project includes many server functions under:
+This repo includes cloud functions under:
 
 - `supabase/functions/*`
 
-If your environment uses these, deploy the required functions for your workflows (attendance automation, notifications, emails, face pipelines, etc.) and ensure required secrets are present in your cloud project.
+Deploy the ones you use in production and verify each has:
+
+- correct secrets
+- CORS support for browser calls
+- expected table and bucket permissions
 
 ---
 
-## 7) Quick verification after setup
+## 7) Minimum validation after setup
 
-1. Open app and confirm login works.
-2. Open Admin and verify student/face sample data loads.
-3. Register a face sample and confirm image uploads to storage.
-4. Test ZIP export/import flow from Face Samples.
-5. Confirm attendance/gate mode writes records successfully.
+After Cloud setup, test this flow:
 
----
-
-## 8) Common issues
-
-### Blank data / auth errors
-
-- Wrong `VITE_SUPABASE_URL` or key
-- Missing RLS policies
-- User role/policy mismatch
-
-### Face image upload fails
-
-- Missing `face-images` bucket
-- Storage policy denies insert/read
-
-### Import/export works partly but fails on images
-
-- Imported ZIP paths do not match manifest paths
-- Storage write blocked by policy
-
-### Works locally, fails on deployed site
-
-- Env vars set locally but not in hosting provider
-- Build used stale env values
+1. Login/signup works.
+2. Admin page loads student data.
+3. Face sample upload stores files in `face-images`.
+4. ZIP export/import in Face Samples works.
+5. Attendance/gate writes records to DB.
+6. Any AI feature returns valid response (not auth/credit/rate-limit config errors).
 
 ---
 
-## 9) Recommended hardening
+## 8) Most common setup failures
 
-- Remove hardcoded fallback keys from frontend files for production branches.
-- Keep all env vars in platform/project secrets.
-- Restrict storage and table policies to least privilege.
-- Keep function secrets and API keys out of source code.
+### Data not loading
+
+- wrong `VITE_SUPABASE_URL` / key
+- missing table policies
+
+### Face image upload/import failures
+
+- `face-images` bucket missing
+- storage policy blocks write/read/delete
+
+### AI not working
+
+- Lovable AI not enabled
+- missing/invalid `LOVABLE_API_KEY`
+- calling AI from client instead of server route/function
+
+---
+
+## 9) Security baseline
+
+- Keep private keys only in Lovable Cloud secrets.
+- Do not hardcode private secrets in source files.
+- Use least-privilege policies for DB and storage.
+- Keep publishable/anon key only in `VITE_` env vars.
