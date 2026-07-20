@@ -183,6 +183,24 @@ const extensionFromMime = (mimeType: string) => {
   return '.jpg';
 };
 
+const mimeTypeFromPath = (filePath: string | null | undefined): string | null => {
+  const ext = (filePath || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+  if (!ext) return null;
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'bmp') return 'image/bmp';
+  if (ext === 'svg') return 'image/svg+xml';
+  return null;
+};
+
+const extensionFromPath = (filePath: string | null | undefined): string | null => {
+  const ext = (filePath || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+  if (!ext) return null;
+  return `.${ext}`;
+};
+
 const normalizeZipPath = (value: string) =>
   value
     .replace(/\\/g, '/')
@@ -1465,6 +1483,17 @@ const StudentFaceSamplesManager: React.FC = () => {
         const student = candidate.student;
         if (candidate.isExisting && conflictMode === 'skip') {
           skippedExisting += 1;
+          const skippedImages = student.samples?.length || 0;
+          if (skippedImages > 0) {
+            setImportProgress((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    current: Math.min(prev.total, prev.current + skippedImages),
+                  }
+                : prev
+            );
+          }
           continue;
         }
 
@@ -1490,16 +1519,20 @@ const StudentFaceSamplesManager: React.FC = () => {
             continue;
           }
 
-          const blob = await fileEntry.async('blob');
-          const extensionMatch = sample.path.match(/\.[a-zA-Z0-9]+$/);
-          const extension = extensionMatch?.[0] || extensionFromMime(blob.type || 'image/jpeg');
+          const binary = await fileEntry.async('arraybuffer');
+          const inferredMime =
+            mimeTypeFromPath(sample.path) ||
+            mimeTypeFromPath(fileEntry.name) ||
+            'image/jpeg';
+          const blob = new Blob([binary], { type: inferredMime });
+          const extension = extensionFromPath(sample.path) || extensionFromPath(fileEntry.name) || extensionFromMime(inferredMime);
           const storagePath = `recovery/${slugifyPart(student.employeeId || student.userId || student.name)}/${Date.now()}-${idx}${extension}`;
 
           const { error: uploadError } = await supabase.storage
             .from('face-images')
             .upload(storagePath, blob, {
               upsert: false,
-              contentType: blob.type || 'image/jpeg',
+              contentType: inferredMime,
             });
 
           if (uploadError) {
