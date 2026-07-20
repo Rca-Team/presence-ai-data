@@ -866,8 +866,8 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
       >
         <div className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-sm border shadow-lg ${
           faceCount > 0 
-            ? 'bg-green-500/20 border-green-500/30 text-green-400' 
-            : 'bg-slate-900/80 border-cyan-500/30 text-cyan-400'
+            ? 'bg-success/15 border-success/35 text-success' 
+            : 'bg-card/90 border-border text-primary'
         }`}>
           <Users className="w-4 h-4" />
           <span className="font-bold">{faceCount}</span>
@@ -876,14 +876,14 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
             <motion.div
               animate={{ scale: [1, 1.2, 1] }}
               transition={{ duration: 1, repeat: Infinity }}
-              className="w-2 h-2 rounded-full bg-green-400"
+              className="w-2 h-2 rounded-full bg-success"
             />
           )}
         </div>
       </motion.div>
 
       {/* Scanner Container */}
-      <div ref={containerRef} className="relative aspect-[4/5] sm:aspect-video rounded-2xl overflow-hidden bg-slate-950 shadow-2xl shadow-cyan-500/20">
+      <div ref={containerRef} className="relative aspect-[4/5] sm:aspect-video rounded-2xl overflow-hidden bg-card border border-border/70 shadow-xl shadow-primary/10">
         {/* Tech Grid Background */}
         <div className="absolute inset-0 opacity-20">
           <div className="absolute inset-0" style={{
@@ -931,7 +931,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm z-10"
+              className="absolute inset-0 bg-background/60 backdrop-blur-sm z-10"
             >
               {/* Central Scanner */}
               <div className="absolute inset-0 flex items-center justify-center">
@@ -1066,15 +1066,15 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
 
         {/* Status Bar */}
         <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-10">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-sm border border-cyan-500/30">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-card/90 backdrop-blur-sm border border-border/70">
             {Object.entries(systemStatus).map(([key, active]) => (
               <div 
                 key={key} 
-                className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                  active ? 'text-cyan-400' : 'text-red-400'
+                 className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
+                   active ? 'text-primary' : 'text-destructive'
                 }`}
               >
-                <div className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-cyan-400' : 'bg-red-400'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-primary' : 'bg-destructive'}`} />
                 <span className="text-[10px] font-medium uppercase hidden sm:inline">{key}</span>
               </div>
             ))}
@@ -1083,8 +1083,8 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
         </div>
 
         {/* FPS Counter */}
-        <div className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-cyan-500/30 hidden sm:block">
-          <div className="flex items-center gap-1 text-xs text-cyan-400">
+        <div className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-card/90 backdrop-blur-sm border border-border/70 hidden sm:block">
+          <div className="flex items-center gap-1 text-xs text-primary">
             <Activity className="w-3 h-3" />
             <span>60 FPS</span>
           </div>
@@ -1097,7 +1097,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
           variant="outline"
           size="lg"
           onClick={() => setFacingMode(f => f === 'user' ? 'environment' : 'user')}
-          className="border-cyan-500/30 text-cyan-600 hover:bg-cyan-500/10"
+          className="border-primary/35 text-primary hover:bg-primary/10"
         >
           <RefreshCw className="w-5 h-5 mr-2" />
           Flip
@@ -1111,9 +1111,9 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
             isScanning 
               ? 'bg-red-500 hover:bg-red-600' 
               : faceCount > 0
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600'
-                : 'bg-slate-600'
-          } text-white shadow-lg ${isScanning ? 'shadow-red-500/25' : 'shadow-cyan-500/25'}`}
+                ? 'bg-primary hover:bg-primary/90'
+                : 'bg-muted text-muted-foreground'
+          } text-primary-foreground shadow-lg ${isScanning ? 'shadow-destructive/25' : 'shadow-primary/25'}`}
         >
           {!modelsLoaded ? (
             <>
@@ -1160,12 +1160,12 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
       </div>
 
       {pendingManualReviews.length > 0 && (
-        <div className="mt-5 space-y-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 p-3 sm:p-4">
+        <div className="mt-5 space-y-3 rounded-2xl border border-primary/25 bg-primary/10 p-3 sm:p-4">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-blue-200">
+            <p className="text-sm font-semibold text-foreground">
               Manual confirmation required ({pendingManualReviews.length})
             </p>
-            <Badge variant="secondary" className="bg-blue-500/20 text-blue-200 border-blue-400/30">
+            <Badge variant="secondary" className="bg-secondary text-secondary-foreground border-border/70">
               Strict 3D mode
             </Badge>
           </div>
@@ -1174,11 +1174,11 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
             {pendingManualReviews.map((review) => (
               <div
                 key={review.id}
-                className="flex flex-col gap-2 rounded-xl border border-blue-400/30 bg-slate-950/40 p-3 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-2 rounded-xl border border-border/70 bg-card/80 p-3 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div>
-                  <p className="text-sm font-medium text-white">{review.employee.name}</p>
-                  <p className="text-xs text-blue-200/90">
+                  <p className="text-sm font-medium text-foreground">{review.employee.name}</p>
+                  <p className="text-xs text-muted-foreground">
                     Candidate {(review.confidence * 100).toFixed(1)}% • 3D score {(review.strictScore * 100).toFixed(1)}% • target {(review.thresholdTarget * 100).toFixed(0)}%
                   </p>
                 </div>
@@ -1188,7 +1188,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
                     variant="outline"
                     onClick={() => rejectManualReview(review.id)}
                     disabled={isSavingReviewId === review.id}
-                    className="border-red-400/40 text-red-200 hover:bg-red-500/20"
+                    className="border-destructive/40 text-destructive hover:bg-destructive/10"
                   >
                     Reject
                   </Button>
@@ -1196,7 +1196,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
                     size="sm"
                     onClick={() => confirmManualReview(review)}
                     disabled={isSavingReviewId === review.id}
-                    className="bg-emerald-600 hover:bg-emerald-700"
+                    className="bg-success text-success-foreground hover:bg-success/90"
                   >
                     {isSavingReviewId === review.id ? 'Saving...' : 'Confirm'}
                   </Button>
@@ -1210,13 +1210,13 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
       {/* Quick Stats */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-5">
         {[
-          { icon: Zap, label: 'Speed', value: '<1-2s', color: 'text-yellow-500' },
-          { icon: Target, label: 'Accuracy', value: '50%', color: 'text-green-500' },
-          { icon: Shield, label: 'Secure', value: 'AES-256', color: 'text-blue-500' },
+          { icon: Zap, label: 'Speed', value: '<1-2s', color: 'text-warning' },
+          { icon: Target, label: 'Accuracy', value: '50%', color: 'text-success' },
+          { icon: Shield, label: 'Secure', value: 'AES-256', color: 'text-primary' },
         ].map((stat, i) => (
-          <div key={i} className="flex flex-col items-center p-2 sm:p-3 rounded-xl bg-slate-900/50 border border-cyan-500/20">
+          <div key={i} className="flex flex-col items-center p-2 sm:p-3 rounded-xl bg-card/85 border border-border/70">
             <stat.icon className={`w-4 h-4 sm:w-5 sm:h-5 ${stat.color} mb-1`} />
-            <span className="text-base sm:text-lg font-bold text-white">{stat.value}</span>
+            <span className="text-base sm:text-lg font-bold text-foreground">{stat.value}</span>
             <span className="text-[10px] sm:text-xs text-muted-foreground">{stat.label}</span>
           </div>
         ))}
