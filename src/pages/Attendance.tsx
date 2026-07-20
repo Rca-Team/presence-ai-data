@@ -236,7 +236,7 @@ const Attendance = () => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-white text-sm sm:text-base">
-                          {attendanceMethod === 'face' ? 'Biometric Scanner' : 'QR Code Scanner'}
+                          {attendanceMethod === 'face' ? 'AI Powered Scanner' : 'QR Code Scanner'}
                         </h3>
                         <p className="text-xs text-white/70 truncate">
                           {attendanceMethod === 'face' ? 'Position your face in frame' : 'Scan your ID card QR code'}
