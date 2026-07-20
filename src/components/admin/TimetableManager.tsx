@@ -180,6 +180,14 @@ const TimetableManager: React.FC = () => {
           teacher_id: t.teacher_id,
           teacher_name: t.teacher_name,
           subject_id: t.subject_id,
+          metadata: {
+            category: selectedCategory,
+            class: parsed?.className || null,
+            section: parsed?.section || null,
+            teacher_record_id: t.teacher_id,
+            teacher_name: t.teacher_name,
+            subject_id: t.subject_id,
+          },
         }));
         const modernInsert = await supabase.from('timetable').insert(rowsModern);
         if (modernInsert.error) {

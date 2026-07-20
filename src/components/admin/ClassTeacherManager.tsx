@@ -60,7 +60,9 @@ interface PeriodTiming {
 
 interface TimetableEntry {
   id?: string;
-  category: string;
+  category?: string;
+  class?: string | null;
+  section?: string | null;
   day_of_week: number;
   period_number: number;
   subject_id: string | null;
@@ -71,7 +73,9 @@ interface TimetableEntry {
 interface Substitution {
   id: string;
   date: string;
-  category: string;
+  category?: string;
+  class?: string | null;
+  section?: string | null;
   period_number: number;
   absent_teacher_name: string;
   substitute_teacher_name: string;
@@ -106,16 +110,94 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
 
   const slotKey = (day: number, period: number) => `${day}-${period}`;
 
+  const mapTimetableRow = (row: any): TimetableEntry => {
+    const metadata = (row.metadata || {}) as any;
+    return {
+      id: row.id,
+      category: row.category || metadata.category || category,
+      class: row.class ?? metadata.class ?? null,
+      section: row.section ?? metadata.section ?? null,
+      day_of_week: Number(row.day_of_week ?? metadata.day_of_week ?? 0),
+      period_number: Number(row.period_number ?? metadata.period_number ?? 0),
+      subject_id: row.subject_id ?? metadata.subject_id ?? null,
+      teacher_record_id: row.teacher_id || row.teacher_record_id || metadata.teacher_id || metadata.teacher_record_id || '',
+      teacher_name: row.teacher_name || metadata.teacher_name || 'Unknown',
+    };
+  };
+
+  const mapSubstitutionRow = (row: any): Substitution => {
+    const metadata = (row.metadata || {}) as any;
+    return {
+      id: row.id,
+      date: row.date,
+      category: row.category || metadata.category || category,
+      class: row.class ?? metadata.class ?? null,
+      section: row.section ?? metadata.section ?? null,
+      period_number: Number(row.period_number ?? metadata.period_number ?? 0),
+      absent_teacher_name: row.absent_teacher_name || metadata.absent_teacher_name || 'Unknown',
+      substitute_teacher_name: row.substitute_teacher_name || metadata.substitute_teacher_name || 'Unassigned',
+      status: row.status || 'pending',
+      auto_assigned: Boolean(row.auto_assigned ?? metadata.auto_assigned ?? false),
+    };
+  };
+
   const loadAll = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [teacherRes, subjectRes, ptRes, ttRes, subRes] = await Promise.all([
+      const [teacherRes, subjectRes, ptRes] = await Promise.all([
         supabase.from('attendance_records').select('id, user_id, device_info').eq('status', 'registered').eq('category', 'Teacher'),
         supabase.from('subjects').select('*').order('name'),
         supabase.from('period_timings').select('*').order('period_number'),
-        supabase.from('timetable').select('*').eq('category', category),
-        supabase.from('substitutions').select('*').eq('category', category).eq('date', format(new Date(), 'yyyy-MM-dd')),
       ]);
+
+      const todayDate = format(new Date(), 'yyyy-MM-dd');
+
+      let timetableRows: any[] = [];
+      if (parsedClassSection) {
+        const modernTimetable = await supabase
+          .from('timetable')
+          .select('*')
+          .eq('class', parsedClassSection.className)
+          .eq('section', parsedClassSection.section);
+
+        if (!modernTimetable.error && Array.isArray(modernTimetable.data) && modernTimetable.data.length > 0) {
+          timetableRows = modernTimetable.data;
+        } else {
+          const legacyTimetable = await supabase.from('timetable').select('*').eq('category', category);
+          timetableRows = legacyTimetable.data || [];
+        }
+      } else {
+        const legacyTimetable = await supabase.from('timetable').select('*').eq('category', category);
+        timetableRows = legacyTimetable.data || [];
+      }
+
+      let substitutionRows: any[] = [];
+      if (parsedClassSection) {
+        const modernSubs = await supabase
+          .from('substitutions')
+          .select('*')
+          .eq('class', parsedClassSection.className)
+          .eq('section', parsedClassSection.section)
+          .eq('date', todayDate);
+
+        if (!modernSubs.error && Array.isArray(modernSubs.data)) {
+          substitutionRows = modernSubs.data;
+        } else {
+          const legacySubs = await supabase
+            .from('substitutions')
+            .select('*')
+            .eq('category', category)
+            .eq('date', todayDate);
+          substitutionRows = legacySubs.data || [];
+        }
+      } else {
+        const legacySubs = await supabase
+          .from('substitutions')
+          .select('*')
+          .eq('category', category)
+          .eq('date', todayDate);
+        substitutionRows = legacySubs.data || [];
+      }
 
       let ctData: any[] = [];
       if (parsedClassSection) {
@@ -243,8 +325,8 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
         mappedPeriods.sort((a, b) => a.period_number - b.period_number);
         setPeriodTimings(mappedPeriods);
       }
-      if (ttRes.data) setTimetable(ttRes.data as TimetableEntry[]);
-      if (subRes.data) setSubstitutions(subRes.data as Substitution[]);
+      setTimetable((timetableRows || []).map(mapTimetableRow).filter((row) => row.day_of_week > 0 && row.period_number > 0));
+      setSubstitutions((substitutionRows || []).map(mapSubstitutionRow).filter((row) => row.period_number > 0));
       setDraftAssignments({});
     } catch (e) {
       console.error(e);
@@ -469,12 +551,18 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
 
     const { data: conflicts } = await supabase
       .from('timetable')
-      .select('id, category')
+      .select('*')
       .eq('day_of_week', dayOfWeek)
-      .eq('period_number', periodNumber)
-      .eq('teacher_record_id', teacher.id);
+      .eq('period_number', periodNumber);
 
-    const hasConflict = (conflicts || []).some((row: any) => row.category !== category);
+    const hasConflict = (conflicts || []).some((row: any) => {
+      const rowTeacherId = row.teacher_id || row.teacher_record_id || row.metadata?.teacher_id || row.metadata?.teacher_record_id;
+      if (rowTeacherId !== teacher.id) return false;
+      if (parsedClassSection) {
+        return row.class !== parsedClassSection.className || row.section !== parsedClassSection.section;
+      }
+      return row.category !== category;
+    });
     if (hasConflict) {
       toast({
         title: 'Teacher already busy',
@@ -484,14 +572,66 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
       return;
     }
 
-    const { error } = await supabase.from('timetable').upsert({
-      category,
-      day_of_week: dayOfWeek,
-      period_number: periodNumber,
-      teacher_record_id: teacher.id,
-      teacher_name: teacher.name,
-      subject_id: subjectId,
-    }, { onConflict: 'category,day_of_week,period_number' });
+    let error: any = null;
+    if (parsedClassSection) {
+      const wipeRes = await supabase
+        .from('timetable')
+        .delete()
+        .eq('class', parsedClassSection.className)
+        .eq('section', parsedClassSection.section)
+        .eq('day_of_week', dayOfWeek)
+        .eq('period_number', periodNumber);
+
+      if (wipeRes.error) {
+        const legacyWipeRes = await supabase
+          .from('timetable')
+          .delete()
+          .eq('category', category)
+          .eq('day_of_week', dayOfWeek)
+          .eq('period_number', periodNumber);
+        if (legacyWipeRes.error) {
+          toast({ title: 'Error', description: legacyWipeRes.error.message, variant: 'destructive' });
+          return;
+        }
+      }
+
+      const modernInsert = await supabase.from('timetable').insert({
+        class: parsedClassSection.className,
+        section: parsedClassSection.section,
+        day_of_week: dayOfWeek,
+        period_number: periodNumber,
+        teacher_id: teacher.id,
+        teacher_name: teacher.name,
+        subject_id: subjectId,
+        metadata: {
+          category,
+          teacher_record_id: teacher.id,
+          subject_id: subjectId,
+        },
+      } as any);
+
+      if (modernInsert.error) {
+        const legacyInsert = await supabase.from('timetable').insert({
+          category,
+          day_of_week: dayOfWeek,
+          period_number: periodNumber,
+          teacher_record_id: teacher.id,
+          teacher_name: teacher.name,
+          subject_id: subjectId,
+        } as any);
+        error = legacyInsert.error;
+      }
+    } else {
+      const legacyUpsert = await supabase.from('timetable').upsert({
+        category,
+        day_of_week: dayOfWeek,
+        period_number: periodNumber,
+        teacher_record_id: teacher.id,
+        teacher_name: teacher.name,
+        subject_id: subjectId,
+      } as any, { onConflict: 'category,day_of_week,period_number' });
+      error = legacyUpsert.error;
+    }
 
     if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
     const key = slotKey(dayOfWeek, periodNumber);
@@ -504,10 +644,25 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
   };
 
   const removeTimetableEntry = async (dayOfWeek: number, periodNumber: number) => {
-    await supabase.from('timetable').delete()
-      .eq('category', category)
-      .eq('day_of_week', dayOfWeek)
-      .eq('period_number', periodNumber);
+    if (parsedClassSection) {
+      const modernDelete = await supabase.from('timetable').delete()
+        .eq('class', parsedClassSection.className)
+        .eq('section', parsedClassSection.section)
+        .eq('day_of_week', dayOfWeek)
+        .eq('period_number', periodNumber);
+
+      if (modernDelete.error) {
+        await supabase.from('timetable').delete()
+          .eq('category', category)
+          .eq('day_of_week', dayOfWeek)
+          .eq('period_number', periodNumber);
+      }
+    } else {
+      await supabase.from('timetable').delete()
+        .eq('category', category)
+        .eq('day_of_week', dayOfWeek)
+        .eq('period_number', periodNumber);
+    }
     loadAll();
   };
 
@@ -540,6 +695,9 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
         if (empId) presentTeacherIds.add(empId);
       });
 
+      const resolveTeacherId = (row: any): string | null =>
+        row?.teacher_id || row?.teacher_record_id || row?.metadata?.teacher_id || row?.metadata?.teacher_record_id || null;
+
       // Get ALL timetable entries for today (all classes) to know who's busy
       const { data: allTimetableToday } = await supabase
         .from('timetable')
@@ -555,7 +713,8 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
       const busyByPeriod = new Map<number, Set<string>>();
       (allTimetableToday || []).forEach((entry: any) => {
         if (!busyByPeriod.has(entry.period_number)) busyByPeriod.set(entry.period_number, new Set());
-        busyByPeriod.get(entry.period_number)!.add(entry.teacher_record_id);
+        const teacherId = resolveTeacherId(entry);
+        if (teacherId) busyByPeriod.get(entry.period_number)!.add(teacherId);
       });
       // Also mark substitutes as busy
       (existingSubs || []).forEach((sub: any) => {
@@ -565,50 +724,94 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
 
       let assignedCount = 0;
       for (const entry of todayTimetable) {
-        const isPresent = presentTeacherIds.has(entry.teacher_record_id);
+        const originalTeacherId = resolveTeacherId(entry);
+        if (!originalTeacherId) continue;
+
+        const isPresent = presentTeacherIds.has(originalTeacherId);
         if (isPresent) continue;
 
         // Check if substitution already exists
-        const alreadyAssigned = (existingSubs || []).some((s: any) =>
-          s.category === category && s.period_number === entry.period_number
-        );
+        const alreadyAssigned = (existingSubs || []).some((s: any) => {
+          const sPeriod = Number(s.period_number ?? s.metadata?.period_number ?? 0);
+          if (sPeriod !== entry.period_number) return false;
+          if (parsedClassSection) return s.class === parsedClassSection.className && s.section === parsedClassSection.section;
+          return s.category === category;
+        });
         if (alreadyAssigned) continue;
 
         // Find a free teacher for this period
         const busyThisPeriod = busyByPeriod.get(entry.period_number) || new Set();
         const freeTeacher = teachers.find(t =>
-          presentTeacherIds.has(t.id) && !busyThisPeriod.has(t.id) && t.id !== entry.teacher_record_id
+          presentTeacherIds.has(t.id) && !busyThisPeriod.has(t.id) && t.id !== originalTeacherId
         );
 
         if (freeTeacher) {
-          await supabase.from('substitutions').insert({
-            date: today,
-            category,
-            period_number: entry.period_number,
-            absent_teacher_id: entry.teacher_record_id,
-            absent_teacher_name: entry.teacher_name,
-            substitute_teacher_id: freeTeacher.id,
-            substitute_teacher_name: freeTeacher.name,
-            subject_id: entry.subject_id,
-            auto_assigned: true,
-            status: 'assigned',
-          });
+          const subjectName = subjects.find(s => s.id === entry.subject_id)?.name || 'Class';
+
+          let substitutionError: any = null;
+          if (parsedClassSection) {
+            const modernInsert = await supabase.from('substitutions').insert({
+              date: today,
+              class: parsedClassSection.className,
+              section: parsedClassSection.section,
+              subject: subjectName,
+                original_teacher_id: originalTeacherId,
+              substitute_teacher_id: freeTeacher.id,
+              status: 'assigned',
+              notes: `Auto substitution for period ${entry.period_number}`,
+              metadata: {
+                category,
+                period_number: entry.period_number,
+                  absent_teacher_id: originalTeacherId,
+                absent_teacher_name: entry.teacher_name,
+                substitute_teacher_name: freeTeacher.name,
+                subject_id: entry.subject_id,
+                auto_assigned: true,
+              },
+            } as any);
+
+            if (modernInsert.error) {
+              const legacyInsert = await supabase.from('substitutions').insert({
+                date: today,
+                category,
+                period_number: entry.period_number,
+                absent_teacher_id: originalTeacherId,
+                absent_teacher_name: entry.teacher_name,
+                substitute_teacher_id: freeTeacher.id,
+                substitute_teacher_name: freeTeacher.name,
+                subject_id: entry.subject_id,
+                auto_assigned: true,
+                status: 'assigned',
+              } as any);
+              substitutionError = legacyInsert.error;
+            }
+          } else {
+            const legacyInsert = await supabase.from('substitutions').insert({
+              date: today,
+              category,
+              period_number: entry.period_number,
+              absent_teacher_id: entry.teacher_record_id,
+              absent_teacher_name: entry.teacher_name,
+              substitute_teacher_id: freeTeacher.id,
+              substitute_teacher_name: freeTeacher.name,
+              subject_id: entry.subject_id,
+              auto_assigned: true,
+              status: 'assigned',
+            } as any);
+            substitutionError = legacyInsert.error;
+          }
+
+          if (substitutionError) {
+            console.error('Failed to insert substitution:', substitutionError);
+            continue;
+          }
 
           // Send in-app notification to substitute teacher
           const periodInfo = periodTimings.find(p => p.period_number === entry.period_number);
           const timeStr = periodInfo ? `${periodInfo.start_time}–${periodInfo.end_time}` : `Period ${entry.period_number}`;
-          const subjectName = subjects.find(s => s.id === entry.subject_id)?.name || 'Class';
-
-          // Find substitute teacher's user_id from face_descriptors (teacher_record_id maps to face descriptor id)
-          const { data: subTeacherProfile } = await supabase
-            .from('face_descriptors')
-            .select('user_id')
-            .eq('id', freeTeacher.id)
-            .maybeSingle();
-
-          if (subTeacherProfile?.user_id) {
+          if (freeTeacher.user_id || freeTeacher.id) {
             await supabase.from('notifications').insert({
-              user_id: subTeacherProfile.user_id,
+              user_id: freeTeacher.user_id || freeTeacher.id,
               title: `📋 Substitution Assignment`,
               message: `You have been assigned to cover ${subjectName} for ${getCategoryLabel(category)} during ${timeStr} (replacing ${entry.teacher_name}).`,
               type: 'substitution',
@@ -646,7 +849,8 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
       .from('substitutions')
       .select('*')
       .eq('date', today)
-      .order('category')
+      .order('class')
+      .order('section')
       .order('period_number');
 
     const { data: timings } = await supabase
@@ -658,8 +862,9 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
 
     const grouped: Record<string, any[]> = {};
     (allSubs || []).forEach((s: any) => {
-      if (!grouped[s.category]) grouped[s.category] = [];
-      grouped[s.category].push(s);
+      const key = s.category || (s.class && s.section ? `${s.class}-${s.section}` : category);
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(s);
     });
 
     const totalAbsent = new Set((allSubs || []).map((s: any) => s.absent_teacher_id)).size;
