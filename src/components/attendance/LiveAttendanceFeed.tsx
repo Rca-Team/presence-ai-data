@@ -133,7 +133,7 @@ const LiveAttendanceFeed: React.FC = () => {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, avatar_url, photo_url, image_url')
+        .select('id, avatar_url')
         .in('id', userIds);
 
       if (error || !data) {
@@ -142,7 +142,7 @@ const LiveAttendanceFeed: React.FC = () => {
 
       const nextMap: Record<string, string> = {};
       data.forEach((profile: any) => {
-        const image = profile.avatar_url || profile.photo_url || profile.image_url;
+        const image = profile.avatar_url;
         if (profile.id && image) {
           nextMap[profile.id] = image;
         }
