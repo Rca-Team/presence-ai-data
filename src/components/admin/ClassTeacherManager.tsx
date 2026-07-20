@@ -695,6 +695,9 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
         if (empId) presentTeacherIds.add(empId);
       });
 
+      const resolveTeacherId = (row: any): string | null =>
+        row?.teacher_id || row?.teacher_record_id || row?.metadata?.teacher_id || row?.metadata?.teacher_record_id || null;
+
       // Get ALL timetable entries for today (all classes) to know who's busy
       const { data: allTimetableToday } = await supabase
         .from('timetable')
@@ -710,7 +713,8 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
       const busyByPeriod = new Map<number, Set<string>>();
       (allTimetableToday || []).forEach((entry: any) => {
         if (!busyByPeriod.has(entry.period_number)) busyByPeriod.set(entry.period_number, new Set());
-        busyByPeriod.get(entry.period_number)!.add(entry.teacher_record_id);
+        const teacherId = resolveTeacherId(entry);
+        if (teacherId) busyByPeriod.get(entry.period_number)!.add(teacherId);
       });
       // Also mark substitutes as busy
       (existingSubs || []).forEach((sub: any) => {
@@ -720,7 +724,10 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
 
       let assignedCount = 0;
       for (const entry of todayTimetable) {
-        const isPresent = presentTeacherIds.has(entry.teacher_record_id);
+        const originalTeacherId = resolveTeacherId(entry);
+        if (!originalTeacherId) continue;
+
+        const isPresent = presentTeacherIds.has(originalTeacherId);
         if (isPresent) continue;
 
         // Check if substitution already exists
@@ -735,7 +742,7 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
         // Find a free teacher for this period
         const busyThisPeriod = busyByPeriod.get(entry.period_number) || new Set();
         const freeTeacher = teachers.find(t =>
-          presentTeacherIds.has(t.id) && !busyThisPeriod.has(t.id) && t.id !== entry.teacher_record_id
+          presentTeacherIds.has(t.id) && !busyThisPeriod.has(t.id) && t.id !== originalTeacherId
         );
 
         if (freeTeacher) {
@@ -748,14 +755,14 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
               class: parsedClassSection.className,
               section: parsedClassSection.section,
               subject: subjectName,
-              original_teacher_id: entry.teacher_record_id,
+                original_teacher_id: originalTeacherId,
               substitute_teacher_id: freeTeacher.id,
               status: 'assigned',
               notes: `Auto substitution for period ${entry.period_number}`,
               metadata: {
                 category,
                 period_number: entry.period_number,
-                absent_teacher_id: entry.teacher_record_id,
+                  absent_teacher_id: originalTeacherId,
                 absent_teacher_name: entry.teacher_name,
                 substitute_teacher_name: freeTeacher.name,
                 subject_id: entry.subject_id,
@@ -768,7 +775,7 @@ const ClassTeacherManager: React.FC<Props> = ({ category, onBack }) => {
                 date: today,
                 category,
                 period_number: entry.period_number,
-                absent_teacher_id: entry.teacher_record_id,
+                absent_teacher_id: originalTeacherId,
                 absent_teacher_name: entry.teacher_name,
                 substitute_teacher_id: freeTeacher.id,
                 substitute_teacher_name: freeTeacher.name,
