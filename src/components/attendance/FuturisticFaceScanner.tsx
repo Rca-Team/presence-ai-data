@@ -940,7 +940,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
                   {[1, 2, 3].map((ring) => (
                     <motion.div
                       key={ring}
-                      className="absolute rounded-full border-2 border-cyan-400/30"
+                      className="absolute rounded-full border-2 border-primary/30"
                       style={{
                         width: `${140 + ring * 35}px`,
                         height: `${140 + ring * 35}px`,
@@ -971,7 +971,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
 
                   {/* Inner Circle */}
                   <motion.div
-                    className="absolute inset-4 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border-2 border-cyan-400 flex items-center justify-center"
+                    className="absolute inset-4 rounded-full bg-gradient-to-br from-primary/20 to-emerald/20 border-2 border-primary/50 flex items-center justify-center"
                     animate={{
                       boxShadow: [
                         '0 0 20px rgba(6,182,212,0.3)',
@@ -1002,7 +1002,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
                         animate={{ scale: [1, 1.1, 1] }}
                         transition={{ duration: 1, repeat: Infinity }}
                       >
-                        <Eye className="w-10 h-10 text-cyan-400" />
+                        <Eye className="w-10 h-10 text-primary" />
                       </motion.div>
                     )}
                   </motion.div>
@@ -1025,7 +1025,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
                 <p className={`text-base sm:text-lg font-bold ${
                   scanPhase === 'complete' && scanResult?.recognized ? 'text-green-400' :
                   scanPhase === 'complete' && !scanResult?.recognized ? 'text-red-400' :
-                  'text-cyan-400'
+                  'text-primary'
                 }`}>
                   {scanPhase === 'detecting' && '◎ DETECTING FACE...'}
                   {scanPhase === 'analyzing' && '◉ ANALYZING BIOMETRICS...'}
@@ -1034,7 +1034,7 @@ const FuturisticFaceScanner: React.FC<FuturisticFaceScannerProps> = ({ onScanCom
                   {scanPhase === 'complete' && !scanResult?.recognized && '✗ UNRECOGNIZED'}
                 </p>
                 {scanResult?.confidence && (
-                  <p className="text-sm text-cyan-300 mt-1">
+                  <p className="text-sm text-primary/80 mt-1">
                     Match Confidence: {Math.round(scanResult.confidence)}%
                   </p>
                 )}
