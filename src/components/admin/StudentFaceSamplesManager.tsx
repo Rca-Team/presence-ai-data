@@ -1519,7 +1519,7 @@ const StudentFaceSamplesManager: React.FC = () => {
             continue;
           }
 
-          const binary = await fileEntry.async('uint8array');
+          const binary = await fileEntry.async('arraybuffer');
           const inferredMime =
             mimeTypeFromPath(sample.path) ||
             mimeTypeFromPath(fileEntry.name) ||
