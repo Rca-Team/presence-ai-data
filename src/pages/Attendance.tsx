@@ -133,7 +133,7 @@ const Attendance = () => {
               className="flex flex-wrap justify-center gap-1.5 sm:gap-3 mt-2 sm:mt-5"
             >
               {[
-                { icon: Zap, text: '<0.5s', color: '--ios-orange' },
+                { icon: Zap, text: '<1-2s', color: '--ios-orange' },
                 { icon: Sparkles, text: '50%', color: '--ios-blue' },
                 { icon: Activity, text: 'Live', color: '--ios-green' },
               ].map((item, i) => (
